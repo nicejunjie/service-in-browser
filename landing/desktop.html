@@ -64,13 +64,15 @@
   .tb-spacer { flex: 1; }
 
   .tb-stats {
-    display: flex; align-items: center; gap: 0;
-    font-size: 13px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    display: grid;
+    grid-template-columns: auto auto auto auto;
+    column-gap: 7px; align-content: center;
+    font-size: 12px; line-height: 1.35;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
     color: #6a7a8a; white-space: nowrap;
   }
   .tb-stats .val { color: #9ab; }
-  .tb-stats .label { color: #556; margin-right: 3px; }
-  .tb-stats .sep { margin: 0 6px; color: #333; }
+  .tb-stats .label { color: #556; }
 
   .tb-logout {
     display: flex; align-items: center; justify-content: center;
@@ -161,7 +163,7 @@
     <div class="tb-sep"></div>
     <div class="task-apps" id="task-apps"></div>
     <div class="tb-spacer"></div>
-    <div class="tb-stats"><span class="label">CPU</span><span class="val" id="st-cpu">--</span><span class="sep">|</span><span class="label">MEM</span><span class="val" id="st-mem">--</span><span class="sep">|</span><span class="label">GPU</span><span class="val" id="st-gpu">--</span><span class="sep">|</span><span class="label">VRAM</span><span class="val" id="st-vram">--</span></div>
+    <div class="tb-stats"><span class="label">CPU</span><span class="val" id="st-cpu">--</span><span class="label">MEM</span><span class="val" id="st-mem">--</span><span class="label">GPU</span><span class="val" id="st-gpu">--</span><span class="label">VRAM</span><span class="val" id="st-vram">--</span></div>
     <div class="tb-sep"></div>
     <a class="tb-logout" href="/cdn-cgi/access/logout" title="Logout">⏻</a>
   </div>
@@ -319,10 +321,10 @@
   function updateStatus() {
     fetch('/api/system/status').then(function(r) { return r.json(); }).then(function(d) {
       document.getElementById('st-cpu').textContent = d.cpu_percent + '%' + (d.cpu_temp != null ? ' ' + d.cpu_temp + '°' : '');
-      document.getElementById('st-mem').textContent = d.memory_used_gb + '/' + d.memory_total_gb + 'G';
+      document.getElementById('st-mem').textContent = Math.round(d.memory_used_gb) + '/' + Math.round(d.memory_total_gb) + 'G';
       var gp = d.gpu_percent != null ? d.gpu_percent + '%' : '--';
       document.getElementById('st-gpu').textContent = gp + (d.gpu_temp != null ? ' ' + d.gpu_temp + '°' : '');
-      document.getElementById('st-vram').textContent = d.gpu_vram_used_gb != null ? d.gpu_vram_used_gb + '/' + d.gpu_vram_total_gb + 'G' : 'N/A';
+      document.getElementById('st-vram').textContent = d.gpu_vram_used_gb != null ? Math.round(d.gpu_vram_used_gb) + '/' + Math.round(d.gpu_vram_total_gb) + 'G' : 'N/A';
     }).catch(function() {});
   }
   updateStatus();
