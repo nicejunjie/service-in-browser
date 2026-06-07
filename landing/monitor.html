@@ -141,6 +141,30 @@
   .proc-user { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #6a7a8a; }
   .proc-cpu.hot { color: #b85c5c; }
   .proc-cpu.warm { color: #c0935a; }
+
+  /* === Narrow screens: stack into one scrollable column === */
+  @media (max-width: 736px) {
+    html, body { overflow-y: auto; overflow-x: hidden; height: auto; }
+    .layout {
+      display: flex; flex-direction: column;
+      height: auto; min-height: 100%;
+      gap: 10px; padding: 10px;
+    }
+    /* grid-column/grid-row on children are ignored in flex; order the stack. */
+    .header { order: 0; flex-wrap: wrap; gap: 6px 12px; }
+    #pause-btn { margin-left: auto; }
+    .cpu-card { order: 1; }
+    .metrics { order: 2; }
+    .proc-sidebar { order: 3; height: 320px; }
+    /* One metric card per row; charts need an explicit height once we scroll,
+       otherwise the flex chart-wrap collapses to 0 and the canvas draws nothing. */
+    .metrics {
+      grid-template-columns: 1fr;
+      grid-template-rows: none;
+    }
+    .metrics .card { grid-column: auto; height: 190px; }
+    .cpu-grid { grid-template-columns: repeat(2, 1fr); }
+  }
 </style>
 </head>
 <body>

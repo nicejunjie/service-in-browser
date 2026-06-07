@@ -57,6 +57,23 @@
   }
   .tb-logout:hover { background: rgba(255,60,60,0.2); color: #ff6666; border-color: rgba(255,60,60,0.3); }
 
+  /* === Narrow screens: let the taskbar scroll horizontally instead of clipping === */
+  @media (max-width: 736px) {
+    .taskbar {
+      overflow-x: auto;
+      overflow-y: hidden;
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;            /* Firefox */
+    }
+    .taskbar::-webkit-scrollbar { display: none; }  /* Chrome/Safari */
+    /* Keep every item at its natural width so the row overflows (and scrolls)
+       rather than shrinking and clipping its contents. */
+    .tb-item, .tb-stats, .tb-logout { flex-shrink: 0; }
+    /* The spacer would otherwise try to fill the row and push the stats/logout
+       off-screen; collapse it so everything sits inline and is scrollable to. */
+    .tb-spacer { flex: 0 0 8px; }
+  }
+
   /* === Frames === */
   .frames { position: fixed; top: 0; left: 0; right: 0; bottom: 54px; }
   .frames iframe {
