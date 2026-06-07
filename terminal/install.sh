@@ -154,6 +154,7 @@ server {
 
     location = /terminals { return 301 /terminals/; }
     location = /terminals/ {
+        add_header Cache-Control 'no-cache, no-store' always;
         rewrite ^ /terminals.html break;
     }
 
