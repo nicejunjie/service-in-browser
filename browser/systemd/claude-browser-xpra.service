@@ -9,6 +9,9 @@ Group=@APP_USER@
 WorkingDirectory=~
 Environment=HOME=@APP_HOME@
 Environment=XDG_RUNTIME_DIR=/run/user/@APP_UID@
+# Evict dead/stale clients after 20s instead of the 60s default, so a freshly
+# opened browser doesn't wait on a zombie session from a closed tab/laptop.
+Environment=XPRA_PING_TIMEOUT=20
 ExecStart=/usr/bin/xpra start-desktop :@DISPLAY_NUM@ \
     --bind-ws=127.0.0.1:@XPRA_PORT@ \
     --ws-auth=none \
@@ -19,6 +22,7 @@ ExecStart=/usr/bin/xpra start-desktop :@DISPLAY_NUM@ \
     --start=@LOOP_SCRIPT@ \
     --clipboard=yes \
     --clipboard-direction=both \
+    --sharing=yes \
     --resize-display=yes \
     --input-devices=uinput \
     --notifications=no \

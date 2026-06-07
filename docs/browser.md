@@ -29,6 +29,15 @@ Key xpra flags:
 - `--resize-display=yes` — allow client to resize the virtual display
 - `--input-devices=uinput` — precise input handling
 - `--encoding=auto` with speed/quality tuning for LAN use
+- `--sharing=yes` — **required** for multiple clients to coexist. Without
+  it xpra runs single-client: a new connection evicts the existing one
+  ("new client does not wish to share"). With a desktop tab and a phone
+  open at once they would otherwise kick each other in a loop, so the
+  phone "never loads." Cloudflare-tunnel clients arrive at nginx from
+  `127.0.0.1`, so in the logs a tunnel client shows as a loopback address.
+- `Environment=XPRA_PING_TIMEOUT=20` (in the unit) — evict a dead/stale
+  client after 20s instead of the 60s default, so a freshly opened browser
+  doesn't wait on a zombie session from a closed tab/laptop.
 
 ## nginx integration
 
@@ -39,6 +48,31 @@ and claude-browser drops `browser.conf` there:
 - `location /browser/` — reverse-proxy to `127.0.0.1:14500` with WS
   upgrade headers. `proxy_pass` with trailing slash strips the `/browser/`
   prefix so xpra sees clean paths.
+- A **regex location** for static assets
+  (`^/browser/(.+\.(js|css|wasm|woff2?|...))$`) — placed before the prefix
+  block so it wins for asset requests, while the extension-less WebSocket
+  path falls through to `/browser/`. It exists to fix slow first loads.
+
+### Asset caching & compression
+
+xpra serves its ~2.1 MB HTML5 client (jQuery, `Client.js`, decode
+workers, wasm) with `Cache-Control: no-store` and **uncompressed**, so a
+fresh open re-downloaded the whole bundle every time — painfully slow over
+the tunnel. The asset location fixes both:
+
+- **Caching** — `proxy_hide_header Cache-Control` + `add_header
+  Cache-Control "public, max-age=86400"`. xpra's assets are immutable per
+  release, so a day is safe. *Caveat:* after an `apt upgrade` of xpra a
+  stale asset could be served for up to a day — hard-refresh once, or drop
+  the max-age.
+- **Compression** — `gzip on; gzip_proxied any;` (nginx does **not** gzip
+  proxied responses without `gzip_proxied`), and `gzip_types` must include
+  `text/javascript` — xpra's actual JS Content-Type, not
+  `application/javascript`. With it, `jquery.js` goes 290 KB → 104 KB.
+- The entry HTML stays `no-store` so the `sub_filter` patches keep running.
+- Assets are proxied (not on nginx's filesystem), so `gzip_static`/the
+  shipped `.br`/`.gz` files can't be used directly; nginx compresses on
+  the fly instead.
 
 ### sub_filter patches
 
@@ -111,9 +145,11 @@ ss -tlnp | grep :14500                             # confirm loopback listen
 
 ## Multi-client behavior
 
-Multiple HTML5 clients can connect simultaneously — they all see the
-same display. Clicking and typing from any client moves the same cursor.
-No isolation between viewers.
+With `--sharing=yes`, multiple HTML5 clients can connect simultaneously —
+they all see the same display. Clicking and typing from any client moves
+the same cursor. No isolation between viewers. (Without `--sharing`, xpra
+is single-client and each new connection evicts the previous one — see the
+flags section above.)
 
 ## Caveats
 

@@ -56,6 +56,7 @@ The root page at `/` is a single-page desktop with:
 - Remembers last active tab in localStorage.
 - Relays `/api/health` and `/api/terminals/status` to the Home iframe via `postMessage` (required for Cloudflare tunnel where iframe fetches don't carry the Access cookie).
 - Listens for `postMessage` from terminal iframes to auto-switch to Browser tab when a URL is opened.
+- **Mobile** — a `max-width: 736px` breakpoint makes the bottom tab bar horizontally scrollable (instead of clipping the right-side tabs/stats/logout). `monitor.html` has its own `736px` breakpoint that collapses its two-column grid into a single scrollable column (the desktop layout is `overflow:hidden`, so charts get explicit heights or the canvas collapses to zero). The terminal and xpra-browser tabs are still desktop-oriented on touch.
 
 ### Shared nginx
 
@@ -81,9 +82,9 @@ A tabbed UI at `/terminals/` (`terminal/terminals.html`) manages terminal tabs w
 One systemd service:
 - `claude-browser-xpra` — xpra `start-desktop :99` with built-in HTML5 client on loopback:14500
 
-xpra handles the virtual X display (Xorg + dummy video driver for RANDR), window management (matchbox in kiosk mode), browser launching (via `browser-loop.sh` wrapper for auto-restart), and the HTML5 client + WebSocket serving. The display dynamically resizes to match the client's browser viewport. Clipboard is handled natively by xpra. xpra is installed from the xpra.org apt repo.
+xpra handles the virtual X display (Xorg + dummy video driver for RANDR), window management (matchbox in kiosk mode), browser launching (via `browser-loop.sh` wrapper for auto-restart), and the HTML5 client + WebSocket serving. The display dynamically resizes to match the client's browser viewport. Clipboard is handled natively by xpra. xpra is installed from the xpra.org apt repo. `--sharing=yes` lets multiple clients (e.g. desktop + phone) view the same session at once; `XPRA_PING_TIMEOUT=20` (env in the unit) evicts dead clients faster than the 60s default.
 
-nginx proxies `/browser/` to xpra's HTTP/WebSocket port with `sub_filter` patches: CSS pins `#screen` to the viewport via `z-index` (hiding xpra's toolbar/login UI without removing keyboard capture elements like `#pasteboard`), and loads `xpra-patches.js` for mouse offset correction and scroll fix. The patches JS file is served from the web root and wrapped in `try/catch` for graceful degradation on xpra updates.
+nginx proxies `/browser/` to xpra's HTTP/WebSocket port with `sub_filter` patches: CSS pins `#screen` to the viewport via `z-index` (hiding xpra's toolbar/login UI without removing keyboard capture elements like `#pasteboard`), and loads `xpra-patches.js` for mouse offset correction and scroll fix. The patches JS file is served from the web root and wrapped in `try/catch` for graceful degradation on xpra updates. A separate regex location caches (`max-age=86400`) and gzips xpra's ~2.1MB HTML5 client assets, which xpra otherwise serves uncompressed and `no-store` — the main fix for slow first loads over the tunnel. See `docs/browser.md`.
 
 ### File manager
 
@@ -198,3 +199,5 @@ All `install.sh` scripts share the same patterns:
 - FileBrowser patches (`landing/filebrowser-patches.js`) are loaded via nginx `sub_filter` injection, not bundled with FileBrowser. The patches hide Vue's conditional action buttons and replace them with permanent always-visible buttons — CSS for these must be scoped to `.fb-permanent` to avoid overriding the `display:none` hiding of Vue's buttons. On desktop widths (>736px), `#dropdown` content renders inline in the header (not as a popup), so dropdown buttons also need label styling
 - `landing/install.sh` must run without `sudo` — with `sudo`, `$HOME` resolves to `/root/` and files deploy to the wrong directory
 - tunnel's `install.sh` only installs the `cloudflared` binary — tunnel creation and Access setup are interactive (see `tunnel/README.md`)
+- xpra is single-client by default — without `--sharing=yes`, opening the Browser tab on a second device evicts the first, and a desktop+phone pair kick each other in a loop so the phone "never loads." Cloudflare-tunnel clients arrive from `127.0.0.1`, so in xpra logs a remote tunnel client appears as a loopback address (not the real client IP)
+- xpra's HTML5 client assets are served `no-store` and uncompressed; the `/browser/` nginx snippet adds a regex asset location that caches + gzips them. nginx won't gzip proxied responses without `gzip_proxied any`, and xpra's JS Content-Type is `text/javascript` (not `application/javascript`) — both must be set or compression silently no-ops
