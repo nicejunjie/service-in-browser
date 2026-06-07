@@ -191,7 +191,7 @@
 
   var APPS = {
     home:     { label: 'Home Service', icon: '🏠', src: '/landing.html' },
-    terminal: { label: 'Terminal', icon: '⬛', src: '/terminals/?v=2' },
+    terminal: { label: 'Terminal', icon: '⬛', src: '/terminals/?v=3' },
     browser:  { label: 'Browser',  icon: '🌐', src: '/browser/' },
     files:    { label: 'Files',    icon: '📁', src: '/files/' },
     notes:    { label: 'Notes',    icon: '📝', src: '/notes.html' },
@@ -222,11 +222,22 @@
       f = document.createElement('iframe');
       f.id = 'frame-' + id;
       f.dataset.id = id;
+      f.dataset.src = APPS[id].src;    // deferred — see loadIfNeeded()
       f.setAttribute('allow', 'clipboard-read; clipboard-write');
-      f.src = APPS[id].src;            // lazy: loaded once when first opened
       framesEl.appendChild(f);
     }
     return f;
+  }
+
+  // Set the iframe's real src only when it first becomes active. Loading an
+  // iframe while its display:none means the inner content (e.g. xterm.js's
+  // FitAddon) measures a 0×0 viewport and renders truncated — the source of
+  // the "Terminal history is cut off until refresh" bug. Deferring src until
+  // visible guarantees correct initial dimensions.
+  function loadIfNeeded(f) {
+    if (f && !f.src && f.dataset && f.dataset.src) {
+      f.src = f.dataset.src;
+    }
   }
 
   function renderTaskbar() {
@@ -260,6 +271,7 @@
     document.title = id ? (APPS[id].label + ' — myhost') : 'myhost';
     var f = id && frameOf(id);
     if (f) {
+      loadIfNeeded(f);
       f.focus();
       // iOS Safari quirk: an iframe laid out while display:none can keep
       // stale internal dimensions when shown. Forward a resize event into
@@ -267,7 +279,12 @@
       if (f.contentWindow) {
         try { f.contentWindow.dispatchEvent(new Event('resize')); } catch (e) {}
       }
-      if (id === 'terminal' && f.contentWindow) {
+      // Skip auto-focusing xterm.js on touch devices — focusing its hidden
+      // textarea pops up the on-screen keyboard unexpectedly when the user
+      // auto-switches into Terminal (e.g. after closing Browser). They can
+      // tap the terminal area to summon the keyboard on demand.
+      var isTouch = window.matchMedia && window.matchMedia('(pointer: coarse)').matches;
+      if (id === 'terminal' && f.contentWindow && !isTouch) {
         try { f.contentWindow.postMessage({ type: 'focus-terminal' }, '*'); } catch (e) {}
       }
     }

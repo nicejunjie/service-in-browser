@@ -283,6 +283,31 @@
     }
   });
 
+  // When the desktop shell switches into Terminal after the app was hidden,
+  // xterm.js inside the active ttyd iframe has stale layout — the history
+  // appears truncated until the browser is reloaded. The desktop dispatches
+  // a `resize` on our window after the iframe becomes visible; forward it
+  // down to the active ttyd iframe after the next paint so its fit-addon
+  // re-measures against the now-correct viewport.
+  function nudgeActiveFrame() {
+    if (!active) return;
+    var f = document.getElementById('frame-' + active);
+    if (!f) return;
+    // Force a real geometry change so the inner window fires its own resize
+    // event — synthetic dispatch alone misses ResizeObserver-based listeners
+    // (ttyd/xterm.js fit-addon uses one). The 1px nudge is briefly visible
+    // but indistinguishable from a normal redraw to the eye.
+    var origW = f.style.width;
+    f.style.width = 'calc(100% - 1px)';
+    requestAnimationFrame(function() {
+      f.style.width = origW || '';
+      if (f.contentWindow) {
+        try { f.contentWindow.dispatchEvent(new Event('resize')); } catch (e) {}
+      }
+    });
+  }
+  window.addEventListener('resize', nudgeActiveFrame);
+
   // On load: fetch running terminals from API, open tabs for them
   api('GET', '/status').then(function(data) {
     var running = data.running || [];
