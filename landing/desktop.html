@@ -2,7 +2,12 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<!-- user-scalable=no + maximum-scale=1: iOS Safari's pinch-zoom is page-wide
+     (a pinch inside any iframe zooms the entire parent), and once it sticks
+     it's effectively impossible to reset programmatically. Disabling it on
+     the shell keeps the desktop layout pinned at 1.0; each app handles its
+     own zoom internally (xpra zooms its canvas, text apps don't need it). -->
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
 <title>myhost</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -256,6 +261,12 @@
     var f = id && frameOf(id);
     if (f) {
       f.focus();
+      // iOS Safari quirk: an iframe laid out while display:none can keep
+      // stale internal dimensions when shown. Forward a resize event into
+      // the newly-active iframe so its content re-measures the viewport.
+      if (f.contentWindow) {
+        try { f.contentWindow.dispatchEvent(new Event('resize')); } catch (e) {}
+      }
       if (id === 'terminal' && f.contentWindow) {
         try { f.contentWindow.postMessage({ type: 'focus-terminal' }, '*'); } catch (e) {}
       }
@@ -275,6 +286,17 @@
   function closeApp(id) {
     var i = openApps.indexOf(id);
     if (i === -1) return;
+    // Blur whatever has focus inside the closing iframe — xpra's #pasteboard
+    // textarea grabs focus on touch, which keeps iOS Safari's visual viewport
+    // shifted (as if a keyboard is up) even after the iframe is gone.
+    try {
+      var ae = document.activeElement;
+      if (ae && typeof ae.blur === 'function') ae.blur();
+    } catch (e) {}
+    if (document.fullscreenElement) {
+      try { document.exitFullscreen(); } catch (e) {}
+    }
+
     openApps.splice(i, 1);
     var f = frameOf(id);
     if (f) f.parentNode.removeChild(f);     // fully unload the app
@@ -284,6 +306,20 @@
       renderTaskbar();
       persist();
     }
+
+    // Force a layout pass after the iframe swap so the taskbar slot and the
+    // newly-active iframe both recompute against the current viewport.
+    window.scrollTo(0, 0);
+    framesEl.style.display = 'none';
+    void framesEl.offsetHeight;
+    requestAnimationFrame(function() {
+      framesEl.style.display = '';
+      window.dispatchEvent(new Event('resize'));
+      var nf = active && frameOf(active);
+      if (nf && nf.contentWindow) {
+        try { nf.contentWindow.dispatchEvent(new Event('resize')); } catch (e) {}
+      }
+    });
   }
 
   function openMenu()  { menuEl.classList.add('open'); startBtn.classList.add('open'); }
