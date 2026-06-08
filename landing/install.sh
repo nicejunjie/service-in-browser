@@ -9,6 +9,7 @@ install -m 644 "$DIR/desktop.html" "$DST_DIR/index.html"
 install -m 644 "$DIR/index.html" "$DST_DIR/landing.html"
 install -m 644 "$DIR/filebrowser-patches.js" "$DST_DIR/filebrowser-patches.js"
 install -m 644 "$DIR/monitor.html" "$DST_DIR/monitor.html"
+install -m 644 "$DIR/upload.html" "$DST_DIR/upload.html"
 install -m 644 "$DIR/services.example.json" "$DST_DIR/services.example.json"
 # Seed services.json from the example only if the host doesn't already have one
 # (it's host-local and gitignored — never overwrite the real list on re-install).

@@ -172,6 +172,7 @@
     <div class="sm-item" data-id="files"><div class="sm-icon">📁</div><div><div class="sm-name">Files</div><div class="sm-desc">File manager rooted at home</div></div></div>
     <div class="sm-item" data-id="notes"><div class="sm-icon">📝</div><div><div class="sm-name">Notes</div><div class="sm-desc">Persistent scratchpad</div></div></div>
     <div class="sm-item" data-id="monitor"><div class="sm-icon">📊</div><div><div class="sm-name">Monitor</div><div class="sm-desc">Live system dashboard</div></div></div>
+    <div class="sm-item" data-id="upload"><div class="sm-icon">⬆</div><div><div class="sm-name">Upload</div><div class="sm-desc">Quick file upload to ~/Uploads</div></div></div>
   </div>
 
   <div class="taskbar" id="taskbar">
@@ -195,7 +196,8 @@
     browser:  { label: 'Browser',  icon: '🌐', src: '/browser/' },
     files:    { label: 'Files',    icon: '📁', src: '/files/' },
     notes:    { label: 'Notes',    icon: '📝', src: '/notes.html' },
-    monitor:  { label: 'Monitor',  icon: '📊', src: '/monitor.html' }
+    monitor:  { label: 'Monitor',  icon: '📊', src: '/monitor.html' },
+    upload:   { label: 'Upload',   icon: '⬆',  src: '/upload.html' }
   };
 
   var framesEl  = document.getElementById('frames');
@@ -207,11 +209,20 @@
   var openApps = [];   // ids, in taskbar order
   var active   = null;
 
+  // Persist open-apps + active to the manager API so phones and computers
+  // share the same desktop state. Coalesce rapid changes via debounce —
+  // setActive can fire several times per click.
+  var persistTimer = null;
   function persist() {
-    try {
-      localStorage.setItem('desktop-open', JSON.stringify(openApps));
-      localStorage.setItem('desktop-active', active || '');
-    } catch (e) {}
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(function() {
+      persistTimer = null;
+      fetch('/api/desktop', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ open: openApps, active: active })
+      }).catch(function() {});
+    }, 150);
   }
 
   function frameOf(id) { return document.getElementById('frame-' + id); }
@@ -419,22 +430,24 @@
   setInterval(relayStatus, 5000);
   setTimeout(relayStatus, 1500);
 
-  // --- restore previous session ---
-  try {
-    var saved = JSON.parse(localStorage.getItem('desktop-open') || '[]');
-    if (Array.isArray(saved)) {
-      saved.forEach(function(id) {
-        if (APPS[id] && openApps.indexOf(id) === -1) { openApps.push(id); ensureFrame(id); }
-      });
+  // --- restore previous session (server-side, so phone + computer share) ---
+  fetch('/api/desktop').then(function(r) { return r.json(); }).then(function(state) {
+    var saved = (state && Array.isArray(state.open)) ? state.open : [];
+    saved.forEach(function(id) {
+      if (APPS[id] && openApps.indexOf(id) === -1) { openApps.push(id); ensureFrame(id); }
+    });
+    var lastActive = state && state.active;
+    if (openApps.length) {
+      setActive(openApps.indexOf(lastActive) !== -1 ? lastActive : openApps[0]);
+    } else {
+      setActive(null);
+      openMenu();   // fresh desktop: show the launcher so there's an obvious next step
     }
-  } catch (e) {}
-  var lastActive = localStorage.getItem('desktop-active');
-  if (openApps.length) {
-    setActive(openApps.indexOf(lastActive) !== -1 ? lastActive : openApps[0]);
-  } else {
+  }).catch(function() {
+    // API unreachable — boot to empty desktop instead of hanging on a spinner.
     setActive(null);
-    openMenu();   // fresh desktop: show the launcher so there's an obvious next step
-  }
+    openMenu();
+  });
 })();
 </script>
 </body>

@@ -29,3 +29,13 @@ All scripts support `--dry-run` and are configurable via env vars (see script he
 
 See [`CLAUDE.md`](CLAUDE.md) for full architecture, health checks, and operational
 commands, and [`docs/`](docs/) for deep dives.
+
+## Screenshots
+
+| Desktop — Files | Desktop — Browser |
+|---|---|
+| ![Files app on the desktop: FileBrowser toolbar with every action (Browser, Share, Rename, Copy, Move, Delete, Download, View, Upload, Info, Select) inline. Taskbar at the bottom shows the Start button, open apps (Terminal, Files, Browser), and live CPU/MEM/GPU/VRAM stats.](docs/images/desktop-files.jpg) | ![Browser app on the desktop: an embedded Chromium served via the xpra HTML5 client, with floating zoom controls (−/⟲/+) at lower-left and an on-screen keyboard chip at lower-right for touch use.](docs/images/desktop-browser.jpg) |
+
+| Mobile — Start menu | Mobile — Terminal + keyboard |
+|---|---|
+| ![Mobile view: Terminal app showing four persistent ttyd tabs (T1–T4) with `echo "hello world"` running in T2. The Start menu is open over the app, listing Home Service, Terminal, Browser, Files, Notes, and Monitor — running apps marked with a green dot.](docs/images/mobile-startmenu.jpg) | ![Mobile view: tapping inside Terminal pops the native iOS keyboard. xterm.js fits the visible portion and the iOS text-suggestion bar sits between the terminal and the keyboard.](docs/images/mobile-keyboard.jpg) |

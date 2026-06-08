@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Upload — myhost</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; }
+  body {
+    background: #0e1117; color: #e0e0e0;
+    font-family: system-ui, -apple-system, sans-serif;
+    display: flex; flex-direction: column;
+    padding: 16px; gap: 14px;
+    -webkit-tap-highlight-color: transparent;
+  }
+  h1 { font-size: 18px; font-weight: 600; color: #cfd6e1; }
+  .target {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 14px; border-radius: 10px;
+    background: #11161d; border: 1px solid #2a3040;
+    font-size: 13px; color: #cfd6e1;
+  }
+  .target .pin { font-size: 18px; line-height: 1; flex: 0 0 auto; }
+  .target .lbl { color: #8a96a5; }
+  .target code {
+    color: #ffd28a; background: transparent; padding: 0;
+    font: 600 14px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
+    word-break: break-all;
+  }
+
+  /* === Drop zone / picker === */
+  .drop {
+    flex: 0 0 auto;
+    border: 2px dashed #2d6cc0; border-radius: 14px;
+    background: #11161d;
+    padding: 28px 16px; text-align: center;
+    cursor: pointer; user-select: none; -webkit-user-select: none;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .drop:hover, .drop.dragover { background: #161e2b; border-color: #4288e0; }
+  .drop .icon { font-size: 44px; line-height: 1; color: #4288e0; }
+  .drop .label { margin-top: 8px; font-size: 16px; font-weight: 600; color: #e8eef5; }
+  .drop .hint { margin-top: 4px; font-size: 12px; color: #6b7785; }
+  /* The real <input> is invisible but covers the drop zone for touch.   */
+  .drop input[type=file] { position: absolute; opacity: 0; pointer-events: none; }
+
+  /* === Action buttons row === */
+  .actions { display: flex; gap: 8px; }
+  .actions button {
+    flex: 1 1 0;
+    height: 44px; border-radius: 10px;
+    border: 1px solid #2a3040; background: #161b22; color: #e8eef5;
+    font: 600 14px/1 system-ui, sans-serif; cursor: pointer;
+  }
+  .actions button.primary { background: #2d6cc0; border-color: #2d6cc0; }
+  .actions button.primary:disabled { background: #1a3a66; border-color: #1a3a66; color: #6b7785; cursor: not-allowed; }
+  .actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  /* === File list === */
+  .list { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+  .list:empty::before {
+    content: "No files queued yet."; display: block;
+    color: #3a4654; text-align: center; padding: 24px; font-size: 13px;
+  }
+  .item {
+    display: flex; align-items: center; gap: 10px;
+    padding: 10px 12px; border-radius: 10px;
+    background: #11161d; margin-bottom: 6px;
+    border: 1px solid transparent;
+  }
+  .item.done   { border-color: #2c5a3d; }
+  .item.error  { border-color: #6a2a2a; }
+  .item .name { flex: 1 1 auto; font-size: 13px; color: #cfd6e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .item .meta { font-size: 11px; color: #6b7785; flex: 0 0 auto; }
+  .item .x {
+    flex: 0 0 auto; width: 28px; height: 28px; border-radius: 14px;
+    background: transparent; color: #6b7785; border: none; font-size: 18px;
+    cursor: pointer;
+  }
+  .item .x:hover { background: #2a3040; color: #e8eef5; }
+
+  /* === Progress + status === */
+  .progress {
+    height: 6px; background: #1a2030; border-radius: 3px; overflow: hidden;
+    display: none;
+  }
+  .progress.on { display: block; }
+  .progress > div { height: 100%; background: #2d6cc0; width: 0%; transition: width 0.15s ease; }
+  .status { font-size: 12px; color: #6b7785; min-height: 1.2em; text-align: center; }
+  .status.error { color: #d27a7a; }
+  .status.ok    { color: #7ad28a; }
+</style>
+</head>
+<body>
+  <h1>Upload</h1>
+  <div class="target">
+    <span class="pin">📂</span>
+    <span class="lbl">Files land in</span>
+    <code id="dir">~/Uploads/</code>
+  </div>
+
+  <label class="drop" id="drop">
+    <div class="icon">⬆</div>
+    <div class="label">Tap to pick photos or files</div>
+    <div class="hint">or drag &amp; drop here · multiple files OK</div>
+    <input type="file" id="picker" multiple>
+  </label>
+
+  <div class="actions">
+    <button id="clear">Clear</button>
+    <button id="send" class="primary" disabled>Upload</button>
+  </div>
+
+  <div class="progress" id="bar"><div id="fill"></div></div>
+  <div class="status" id="status"></div>
+  <div class="list" id="list"></div>
+
+<script>
+(function() {
+  var picker = document.getElementById('picker');
+  var drop   = document.getElementById('drop');
+  var list   = document.getElementById('list');
+  var sendBtn= document.getElementById('send');
+  var clearBtn = document.getElementById('clear');
+  var bar    = document.getElementById('bar');
+  var fill   = document.getElementById('fill');
+  var status = document.getElementById('status');
+  var dirEl  = document.getElementById('dir');
+
+  var queue = [];   // [{file, el, state: 'pending'|'done'|'error'}]
+
+  function fmtSize(n) {
+    if (n < 1024) return n + ' B';
+    if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+    if (n < 1073741824) return (n / 1048576).toFixed(1) + ' MB';
+    return (n / 1073741824).toFixed(2) + ' GB';
+  }
+
+  function setStatus(msg, kind) {
+    status.textContent = msg || '';
+    status.className = 'status' + (kind ? ' ' + kind : '');
+  }
+
+  function refreshSendBtn() {
+    var pending = queue.filter(function(q) { return q.state === 'pending'; }).length;
+    sendBtn.disabled = pending === 0;
+    sendBtn.textContent = pending ? ('Upload ' + pending + ' file' + (pending === 1 ? '' : 's')) : 'Upload';
+  }
+
+  function addFiles(files) {
+    for (var i = 0; i < files.length; i++) {
+      var f = files[i];
+      var el = document.createElement('div');
+      el.className = 'item';
+      el.innerHTML = '<span class="name"></span><span class="meta"></span><button class="x" title="Remove">×</button>';
+      el.querySelector('.name').textContent = f.name;
+      el.querySelector('.meta').textContent = fmtSize(f.size);
+      var entry = { file: f, el: el, state: 'pending' };
+      el.querySelector('.x').addEventListener('click', function(e, entryRef) {
+        // closure-friendly: rebind via dataset index lookup
+        e.preventDefault();
+      });
+      // Bind remove via a fresh handler that knows its entry by identity.
+      (function(entry) {
+        el.querySelector('.x').addEventListener('click', function() {
+          var i = queue.indexOf(entry);
+          if (i !== -1) queue.splice(i, 1);
+          el.remove();
+          refreshSendBtn();
+        });
+      })(entry);
+      queue.push(entry);
+      list.appendChild(el);
+    }
+    refreshSendBtn();
+    setStatus('');
+  }
+
+  picker.addEventListener('change', function() {
+    if (picker.files && picker.files.length) addFiles(picker.files);
+    picker.value = '';   // allow re-picking the same file later
+  });
+
+  // Drag & drop (desktop)
+  ['dragenter', 'dragover'].forEach(function(t) {
+    drop.addEventListener(t, function(e) { e.preventDefault(); drop.classList.add('dragover'); });
+  });
+  ['dragleave', 'drop'].forEach(function(t) {
+    drop.addEventListener(t, function(e) { e.preventDefault(); drop.classList.remove('dragover'); });
+  });
+  drop.addEventListener('drop', function(e) {
+    if (e.dataTransfer && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+  });
+
+  clearBtn.addEventListener('click', function() {
+    queue = [];
+    list.innerHTML = '';
+    bar.classList.remove('on'); fill.style.width = '0%';
+    setStatus('');
+    refreshSendBtn();
+  });
+
+  sendBtn.addEventListener('click', function() {
+    var pending = queue.filter(function(q) { return q.state === 'pending'; });
+    if (!pending.length) return;
+    var fd = new FormData();
+    pending.forEach(function(q) { fd.append('file', q.file, q.file.name); });
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/upload');
+    xhr.upload.onprogress = function(e) {
+      if (!e.lengthComputable) return;
+      bar.classList.add('on');
+      fill.style.width = (100 * e.loaded / e.total).toFixed(1) + '%';
+      setStatus('Uploading… ' + fmtSize(e.loaded) + ' / ' + fmtSize(e.total));
+    };
+    xhr.onload = function() {
+      bar.classList.remove('on'); fill.style.width = '0%';
+      if (xhr.status >= 200 && xhr.status < 300) {
+        var resp = {};
+        try { resp = JSON.parse(xhr.responseText); } catch (e) {}
+        if (resp.dir) dirEl.textContent = resp.dir;
+        pending.forEach(function(q) { q.state = 'done'; q.el.classList.add('done'); });
+        setStatus('Uploaded ' + pending.length + ' file' + (pending.length === 1 ? '' : 's') + ' (' + fmtSize(resp.bytes || 0) + ')', 'ok');
+      } else {
+        pending.forEach(function(q) { q.state = 'error'; q.el.classList.add('error'); });
+        setStatus('Upload failed (HTTP ' + xhr.status + ')', 'error');
+      }
+      refreshSendBtn();
+    };
+    xhr.onerror = function() {
+      bar.classList.remove('on'); fill.style.width = '0%';
+      pending.forEach(function(q) { q.state = 'error'; q.el.classList.add('error'); });
+      setStatus('Network error', 'error');
+      refreshSendBtn();
+    };
+    sendBtn.disabled = true;
+    setStatus('Uploading…');
+    xhr.send(fd);
+  });
+
+  refreshSendBtn();
+})();
+</script>
+</body>
+</html>

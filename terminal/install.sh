@@ -164,6 +164,9 @@ server {
         proxy_http_version 1.1;
         proxy_set_header Host \$host;
         proxy_set_header X-Real-IP \$remote_addr;
+        client_max_body_size 5G;       # allow large /api/upload posts
+        proxy_request_buffering off;   # stream upload body to the manager
+        proxy_read_timeout 3600;
     }
 
     # Dynamic terminal routing: /tN/ -> port from map

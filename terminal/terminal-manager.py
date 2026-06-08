@@ -15,6 +15,7 @@ import http.server
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
@@ -37,6 +38,10 @@ def _app_user():
 
 APP_USER = _app_user()
 NOTES_FILE = os.path.expanduser(f"~{APP_USER}/.local/share/desktop-notes.md")
+DESKTOP_STATE_FILE = os.path.expanduser(f"~{APP_USER}/.local/share/desktop-state.json")
+UPLOAD_DIR = os.environ.get(
+    "UPLOAD_DIR", os.path.expanduser(f"~{APP_USER}/Uploads")
+)
 # Host-local service definitions (gitignored). Each entry may carry a "key" and a
 # "health" URL; those are added to /api/health so the Home Service page can show
 # live dots without baking personal hostnames into the repo.
@@ -45,6 +50,182 @@ SERVICES_FILE = os.path.expanduser(f"~{APP_USER}/claude-web-www/services.json")
 # Per-process CPU snapshot for delta-based calculation
 _prev_proc_snap = {}  # pid -> (utime+stime, timestamp)
 _prev_proc_time = 0.0
+
+
+# ---- /api/upload helpers ---------------------------------------------------
+
+class _MultipartError(Exception):
+    pass
+
+
+def _chown_app(path):
+    """Set ownership of `path` to APP_USER if running as root (the manager
+    typically does). Best-effort — silently ignored on failure."""
+    try:
+        import pwd
+        if os.geteuid() != 0:
+            return
+        pw = pwd.getpwnam(APP_USER)
+        os.chown(path, pw.pw_uid, pw.pw_gid)
+    except Exception:
+        pass
+
+
+def _safe_upload_name(name):
+    # Browsers may send "C:\\fakepath\\foo.jpg" or "../etc/passwd".
+    # Strip any directory components and disallowed characters.
+    name = (name or "").replace("\\", "/").split("/")[-1].strip()
+    name = re.sub(r"[\x00-\x1f]", "", name)
+    if not name or name in (".", ".."):
+        name = "upload"
+    return name[:255]
+
+
+def _unique_path(path):
+    if not os.path.exists(path):
+        return path
+    base, ext = os.path.splitext(path)
+    for i in range(1, 10000):
+        cand = f"{base}-{i}{ext}"
+        if not os.path.exists(cand):
+            return cand
+    raise _MultipartError("destination exists, too many collisions")
+
+
+class _BoundaryReader:
+    """Streams the body of one multipart part, stopping at the next boundary.
+    Reads chunks from `src` while always holding back enough bytes to detect
+    the boundary mid-chunk. On exhaustion, `done` becomes True and `next_term`
+    tells the outer loop whether more parts follow (\\r\\n) or this was the
+    closing boundary (--)."""
+    def __init__(self, src, boundary):
+        self._src = src
+        self._sep = b"\r\n" + boundary
+        self._buf = b""
+        self.done = False
+        self.next_term = b""
+        self.leftover = b""   # bytes past the boundary; belong to next part
+
+    def read(self, _size=-1):
+        # Invariant: only return b"" when self.done is True (so callers like
+        # shutil.copyfileobj loop until the part is fully drained).
+        while not self.done:
+            idx = self._buf.find(self._sep)
+            if idx != -1:
+                out = self._buf[:idx]
+                tail = idx + len(self._sep)
+                while len(self._buf) < tail + 2:
+                    more = self._src.read(2)
+                    if not more:
+                        raise _MultipartError("unexpected EOF after boundary")
+                    self._buf += more
+                self.next_term = self._buf[tail:tail + 2]
+                self.leftover = self._buf[tail + 2:]
+                self._buf = b""
+                self.done = True
+                return out
+            keep = len(self._sep)
+            if len(self._buf) > keep:
+                out = self._buf[:-keep]
+                self._buf = self._buf[-keep:]
+                return out
+            chunk = self._src.read(65536)
+            if not chunk:
+                raise _MultipartError("unexpected EOF in part body")
+            self._buf += chunk
+        return b""
+
+
+def _iter_multipart_files(src, boundary):
+    """Yield (filename, file-like) for each file part in the multipart body."""
+    # Discard prelude up to first boundary.
+    buf = b""
+    while True:
+        chunk = src.read(65536)
+        if not chunk:
+            raise _MultipartError("empty body")
+        buf += chunk
+        idx = buf.find(boundary)
+        if idx != -1:
+            # Need 2 bytes after to know if it's the only/last boundary.
+            while len(buf) < idx + len(boundary) + 2:
+                more = src.read(2)
+                if not more:
+                    raise _MultipartError("truncated boundary")
+                buf += more
+            term = buf[idx + len(boundary):idx + len(boundary) + 2]
+            if term == b"--":
+                return  # empty form
+            # Push remaining bytes back into a tiny in-memory stream so the
+            # part header parser sees them along with the next read().
+            leftover = buf[idx + len(boundary) + 2:]
+            src = _PrependedReader(leftover, src)
+            break
+
+    while True:
+        # Read headers up to blank line.
+        headers = b""
+        while b"\r\n\r\n" not in headers:
+            chunk = src.read(4096)
+            if not chunk:
+                raise _MultipartError("truncated headers")
+            headers += chunk
+        head, _, rest = headers.partition(b"\r\n\r\n")
+        src = _PrependedReader(rest, src)
+        disposition = ""
+        for line in head.split(b"\r\n"):
+            if line.lower().startswith(b"content-disposition:"):
+                disposition = line.decode("utf-8", "replace")
+                break
+        reader = _BoundaryReader(src, boundary)
+        fn_match = re.search(r'filename="([^"]*)"', disposition)
+        if fn_match:
+            yield fn_match.group(1), reader
+        # Drain anything the consumer didn't read (and drain non-file fields).
+        while not reader.done:
+            if not reader.read():
+                break
+        if reader.next_term == b"--":
+            return
+        # Carry over any bytes the reader buffered past the boundary so the
+        # next part's headers see a contiguous stream.
+        src = _PrependedReader(reader.leftover, src)
+
+
+class _PrependedReader:
+    """Wrap a stream so its first reads yield `head` before falling through."""
+    def __init__(self, head, src):
+        self._head = head
+        self._src = src
+
+    def read(self, size=-1):
+        if self._head:
+            if size < 0 or size >= len(self._head):
+                out = self._head
+                self._head = b""
+                return out
+            out = self._head[:size]
+            self._head = self._head[size:]
+            return out
+        return self._src.read(size if size > 0 else 65536)
+
+
+class _LimitedReader:
+    """Cap reads from a socket-like stream at exactly Content-Length bytes.
+    Without this, reads past the body length block forever on a keep-alive
+    socket — there is no EOF signal until the client closes."""
+    def __init__(self, src, length):
+        self._src = src
+        self._left = length
+
+    def read(self, size=-1):
+        if self._left <= 0:
+            return b""
+        if size is None or size < 0 or size > self._left:
+            size = self._left
+        data = self._src.read(size)
+        self._left -= len(data)
+        return data
 
 # RAPL energy snapshot for CPU power calculation
 _prev_rapl_uj = 0
@@ -382,6 +563,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_browser_open()
         if self.path == "/api/notes":
             return self._handle_notes_save()
+        if self.path == "/api/desktop":
+            return self._handle_desktop_save()
+        if self.path == "/api/upload":
+            return self._handle_upload()
         self.send_error(404)
 
     def _handle_notes_save(self):
@@ -399,6 +584,74 @@ class Handler(http.server.BaseHTTPRequestHandler):
         os.makedirs(os.path.dirname(NOTES_FILE), exist_ok=True)
         with open(NOTES_FILE, "w") as f:
             f.write(content)
+        self._json(200, {"ok": True})
+
+    def _handle_upload(self):
+        # Parse multipart/form-data and stream each "file" part directly into
+        # UPLOAD_DIR. We don't use cgi.FieldStorage because it spools entire
+        # uploads to memory/temp first; this hand-parser streams chunk-by-chunk
+        # so multi-GB uploads stay flat in memory.
+        ctype = self.headers.get("Content-Type", "")
+        m = re.match(r'multipart/form-data;\s*boundary=(?:"([^"]+)"|([^;\s]+))', ctype)
+        if not m:
+            self._json(400, {"error": "expected multipart/form-data"})
+            return
+        boundary = ("--" + (m.group(1) or m.group(2))).encode()
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+        except ValueError:
+            self._json(411, {"error": "Content-Length required"})
+            return
+        if length <= 0:
+            self._json(411, {"error": "Content-Length required"})
+            return
+        body = _LimitedReader(self.rfile, length)
+        os.makedirs(UPLOAD_DIR, exist_ok=True)
+        _chown_app(UPLOAD_DIR)
+        saved, total_bytes = [], 0
+        try:
+            for filename, src in _iter_multipart_files(body, boundary):
+                safe = _safe_upload_name(filename)
+                dst = _unique_path(os.path.join(UPLOAD_DIR, safe))
+                with open(dst, "wb") as out:
+                    shutil.copyfileobj(src, out)
+                _chown_app(dst)
+                size = os.path.getsize(dst)
+                total_bytes += size
+                saved.append({"name": os.path.basename(dst), "size": size})
+        except _MultipartError as e:
+            self._json(400, {"error": str(e)})
+            return
+        self._json(200, {"ok": True, "saved": saved, "bytes": total_bytes,
+                         "dir": UPLOAD_DIR})
+
+    def _handle_desktop_save(self):
+        length = int(self.headers.get("Content-Length", 0))
+        if length > 4096:
+            self._json(400, {"error": "too large"})
+            return
+        body = self.rfile.read(length) if length else b""
+        try:
+            data = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            self._json(400, {"error": "invalid json"})
+            return
+        # Whitelist: only persist {open: [str], active: str|null}. open is
+        # capped at 16 entries to keep the file tiny; ids are stored verbatim
+        # (the client whitelists against its own APPS map on read).
+        open_apps = data.get("open", []) or []
+        if not isinstance(open_apps, list):
+            self._json(400, {"error": "open must be a list"})
+            return
+        open_apps = [str(x) for x in open_apps[:16]]
+        active = data.get("active")
+        if active is not None and not isinstance(active, str):
+            self._json(400, {"error": "active must be a string or null"})
+            return
+        state = {"open": open_apps, "active": active}
+        os.makedirs(os.path.dirname(DESKTOP_STATE_FILE), exist_ok=True)
+        with open(DESKTOP_STATE_FILE, "w") as f:
+            json.dump(state, f)
         self._json(200, {"ok": True})
 
     def _handle_browser_open(self):
@@ -462,6 +715,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except FileNotFoundError:
                 content = ""
             self._json(200, {"content": content})
+            return
+        if self.path == "/api/desktop":
+            try:
+                with open(DESKTOP_STATE_FILE) as f:
+                    state = json.load(f)
+            except (FileNotFoundError, json.JSONDecodeError):
+                state = {"open": [], "active": None}
+            self._json(200, state)
             return
         if self.path == "/api/health":
             self._json(200, self._check_health())
