@@ -79,25 +79,20 @@
 
   .tb-spacer { flex: 1; }
 
-  /* Each row: [label] [num] [%] [num] [°]  [label] [num/num] [G]  [label] [num]
-     10 columns: CPU/GPU on the left, MEM/VRAM in the middle, LOAD (1-min
-     average) on the right. column-gap is 0 so digits and units touch
-     ("0.6%", "48°", "13/60G"); spacing is added explicitly between groups.
-     LOAD only appears on the top row; the bottom-row tail is blank.
-     tabular-nums keeps digit widths uniform. */
+  /* Each row: [label] [num] [%] [num] [°]  [label] [num/num] [G]
+     Numeric columns use fixed `ch` widths so labels don't shift sideways as
+     values change digit-count (e.g. "0.3%" → "0%"). column-gap is 0 so
+     digits/units touch ("0.6%", "48°", "13/60G"); spacing is added
+     explicitly only between groups. tabular-nums keeps digit widths
+     uniform. */
   .tb-stats {
     display: grid;
-    /* Fixed widths on the numeric columns so labels don't shift sideways as
-       values change (e.g. "0.3%" → "0%"). `ch` is the width of a digit in
-       the monospace font; tabular-nums keeps it consistent across digits. */
     grid-template-columns:
       auto         /* CPU/GPU label */
       4ch  auto    /* %  number + unit */
       3ch  auto    /* °  number + unit */
       auto         /* MEM/VRAM label */
-      5ch  auto    /* used/total + G */
-      auto         /* LOAD label */
-      4ch;         /* load value */
+      5ch  auto;   /* used/total + G */
     column-gap: 0; row-gap: 1px; align-content: center;
     font-size: 12px; line-height: 1.35;
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -108,11 +103,9 @@
   .tb-stats .n     { color: #9ab; text-align: right; }
   .tb-stats .u     { color: #9ab; text-align: left; }
   /* Gap between % and the temperature number on the CPU/GPU block */
-  .tb-stats .u:nth-child(10n+3) { padding-right: 8px; }
+  .tb-stats .u:nth-child(8n+3) { padding-right: 8px; }
   /* Gap between ° and the MEM/VRAM label */
-  .tb-stats .u:nth-child(10n+5) { padding-right: 12px; }
-  /* Gap between G (end of mem block) and LOAD label */
-  .tb-stats .u:nth-child(10n+8) { padding-right: 12px; }
+  .tb-stats .u:nth-child(8n+5) { padding-right: 12px; }
 
   .tb-logout {
     display: flex; align-items: center; justify-content: center;
@@ -210,16 +203,12 @@
       <span class="n"  id="cpu-tn">--</span><span class="u" id="cpu-tu">°</span>
       <span class="label">MEM</span>
       <span class="n"  id="mem-ut">--</span><span class="u">G</span>
-      <span class="label">LOAD</span>
-      <span class="n"  id="load-1">--</span>
 
       <span class="label">GPU</span>
       <span class="n"  id="gpu-n">--</span><span class="u" id="gpu-u">%</span>
       <span class="n"  id="gpu-tn">--</span><span class="u" id="gpu-tu">°</span>
       <span class="label">VRAM</span>
       <span class="n"  id="vram-ut">--</span><span class="u">G</span>
-      <span class="label"></span>
-      <span class="n"></span>
     </div>
     <div class="tb-sep"></div>
     <a class="tb-logout" href="/cdn-cgi/access/logout" title="Logout">⏻</a>
@@ -467,8 +456,6 @@
         ? (Math.round(d.gpu_vram_used_gb) + '/' + Math.round(d.gpu_vram_total_gb)) : null;
       set('mem-ut',  mem);
       set('vram-ut', vram);
-      var la = d.load_avg && d.load_avg[0];
-      set('load-1', la != null ? la.toFixed(2) : null);
     }).catch(function() {});
   }
   updateStatus();
