@@ -390,6 +390,16 @@
       });
       launch('browser');
     }
+    if (e.data.type === 'open-files-at') {
+      // Deep-link Files at a path relative to FileBrowser's root (~). We set
+      // the iframe src directly so existing FB state is replaced — re-clicking
+      // the button always returns the user to the requested folder.
+      var rel = (e.data.path || '').replace(/^\/+/, '');
+      var url = '/files/files/' + rel.split('/').map(encodeURIComponent).join('/');
+      launch('files');
+      var f = frameOf('files');
+      if (f) f.src = url;   // overrides the lazy dataset.src on first load too
+    }
   });
 
   // --- status bar ---

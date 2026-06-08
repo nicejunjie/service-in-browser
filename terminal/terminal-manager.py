@@ -567,7 +567,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_desktop_save()
         if self.path == "/api/upload":
             return self._handle_upload()
+        if self.path == "/api/upload/clear":
+            return self._handle_upload_clear()
         self.send_error(404)
+
+    def _handle_upload_clear(self):
+        # Delete every regular file directly inside UPLOAD_DIR. Subdirectories
+        # are left alone (this endpoint is for clearing the quick-sync inbox,
+        # not nuking arbitrary trees).
+        if not os.path.isdir(UPLOAD_DIR):
+            self._json(200, {"ok": True, "removed": 0})
+            return
+        removed = 0
+        for name in os.listdir(UPLOAD_DIR):
+            p = os.path.join(UPLOAD_DIR, name)
+            try:
+                if os.path.isfile(p) and not os.path.islink(p):
+                    os.remove(p)
+                    removed += 1
+            except OSError:
+                pass
+        self._json(200, {"ok": True, "removed": removed})
 
     def _handle_notes_save(self):
         length = int(self.headers.get("Content-Length", 0))
@@ -723,6 +743,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except (FileNotFoundError, json.JSONDecodeError):
                 state = {"open": [], "active": None}
             self._json(200, state)
+            return
+        if self.path == "/api/upload/list":
+            files = []
+            if os.path.isdir(UPLOAD_DIR):
+                for name in sorted(os.listdir(UPLOAD_DIR)):
+                    p = os.path.join(UPLOAD_DIR, name)
+                    try:
+                        st = os.stat(p)
+                    except OSError:
+                        continue
+                    if not os.path.isfile(p) or os.path.islink(p):
+                        continue
+                    files.append({"name": name, "size": st.st_size,
+                                  "mtime": int(st.st_mtime)})
+            # Newest first — quick-sync users care about what just landed.
+            files.sort(key=lambda f: f["mtime"], reverse=True)
+            # Compute path relative to APP_USER's home so the client can deep-
+            # link into FileBrowser (which is rooted at ~).
+            home = os.path.expanduser(f"~{APP_USER}").rstrip("/") + "/"
+            rel = UPLOAD_DIR[len(home):] if UPLOAD_DIR.startswith(home) else None
+            self._json(200, {"dir": UPLOAD_DIR, "rel_to_home": rel, "files": files})
             return
         if self.path == "/api/health":
             self._json(200, self._check_health())

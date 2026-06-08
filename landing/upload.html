@@ -6,17 +6,23 @@
 <title>Upload — myhost</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  html, body { height: 100%; }
+  html, body { min-height: 100%; }
   body {
     background: #0e1117; color: #e0e0e0;
     font-family: system-ui, -apple-system, sans-serif;
     display: flex; flex-direction: column;
     padding: 16px; gap: 14px;
     -webkit-tap-highlight-color: transparent;
+    /* Let the document itself scroll when content exceeds the viewport
+       (small screens, full folder + queue). Inner lists no longer try to
+       claim a fixed slice of the viewport, which used to push the folder
+       list below the fold with nothing scrollable. */
+    overflow-y: auto;
   }
   h1 { font-size: 18px; font-weight: 600; color: #cfd6e1; }
   .target {
-    display: flex; align-items: center; gap: 10px;
+    display: flex; align-items: center; flex-wrap: wrap;
+    gap: 8px 10px;
     padding: 10px 14px; border-radius: 10px;
     background: #11161d; border: 1px solid #2a3040;
     font-size: 13px; color: #cfd6e1;
@@ -24,9 +30,25 @@
   .target .pin { font-size: 18px; line-height: 1; flex: 0 0 auto; }
   .target .lbl { color: #8a96a5; }
   .target code {
+    /* Keep the path on one line — if it doesn't fit, the button (next flex
+       child) wraps to its own row rather than the path breaking mid-string. */
+    flex: 1 1 0; min-width: 0;
     color: #ffd28a; background: transparent; padding: 0;
     font: 600 14px/1.2 ui-monospace, SFMono-Regular, Menlo, monospace;
-    word-break: break-all;
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
+  .target .link {
+    flex: 0 0 auto;
+    background: #2d6cc0; color: #fff; border: none; border-radius: 8px;
+    padding: 8px 12px; font: 600 13px/1 system-ui, sans-serif;
+    cursor: pointer; white-space: nowrap;
+  }
+  .target .link:hover { background: #3d7cd0; }
+  .target .link:disabled { background: #1a3a66; color: #6b7785; cursor: not-allowed; }
+  /* When the button wraps onto its own line (narrow screens), let it span
+     the full row instead of clinging to the right edge — bigger tap target. */
+  @media (max-width: 540px) {
+    .target .link { flex: 1 0 100%; padding: 10px; }
   }
 
   /* === Drop zone / picker === */
@@ -57,11 +79,34 @@
   .actions button.primary:disabled { background: #1a3a66; border-color: #1a3a66; color: #6b7785; cursor: not-allowed; }
   .actions button:disabled { opacity: 0.5; cursor: not-allowed; }
 
-  /* === File list === */
-  .list { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+  /* === Section header (Queued / In folder) === */
+  .section-h {
+    display: flex; align-items: center; gap: 8px;
+    margin-top: 6px; padding: 0 2px;
+    font-size: 12px; font-weight: 600; color: #8a96a5;
+    text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  .section-h .count { color: #6b7785; font-weight: 500; text-transform: none; letter-spacing: 0; }
+  .section-h .spacer { flex: 1 1 auto; }
+  .section-h .link {
+    font-size: 12px; font-weight: 600; color: #8a8c2e; text-transform: none;
+    letter-spacing: 0; background: none; border: none; cursor: pointer; padding: 4px 6px;
+  }
+  .section-h .link:hover { color: #c5c84a; }
+  .section-h .link.danger { color: #c97070; }
+  .section-h .link.danger:hover { color: #e08585; }
+  .section-h .link:disabled { color: #3a4654; cursor: not-allowed; }
+
+  /* === File list ===
+     No fixed max-heights — the lists grow with their content and the body
+     itself scrolls when the viewport is too short. On tall screens with
+     many files we cap each list so neither dominates the page. */
+  .list { flex: 0 0 auto; }
+  .list.queue  { max-height: min(40vh, 280px); overflow-y: auto; }
+  .list.folder { max-height: min(60vh, 480px); overflow-y: auto; }
   .list:empty::before {
-    content: "No files queued yet."; display: block;
-    color: #3a4654; text-align: center; padding: 24px; font-size: 13px;
+    content: "Nothing here yet."; display: block;
+    color: #3a4654; text-align: center; padding: 18px; font-size: 12px;
   }
   .item {
     display: flex; align-items: center; gap: 10px;
@@ -70,9 +115,17 @@
     border: 1px solid transparent;
   }
   .item.done   { border-color: #2c5a3d; }
-  .item.error  { border-color: #6a2a2a; }
+  .item.error  { border-color: #6a2a2a; background: #1d1416; }
   .item .name { flex: 1 1 auto; font-size: 13px; color: #cfd6e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .item .meta { font-size: 11px; color: #6b7785; flex: 0 0 auto; }
+  .item .badge {
+    flex: 0 0 auto; font: 600 11px/1 system-ui, sans-serif;
+    padding: 4px 8px; border-radius: 10px;
+    min-width: 44px; text-align: center;
+    background: #1a3a66; color: #cfe3ff;     /* pending/uploading default */
+  }
+  .item.done  .badge { background: #2c5a3d; color: #c8efd2; }
+  .item.error .badge { background: #6a2a2a; color: #ffd0d0; }
   .item .x {
     flex: 0 0 auto; width: 28px; height: 28px; border-radius: 14px;
     background: transparent; color: #6b7785; border: none; font-size: 18px;
@@ -82,11 +135,21 @@
 
   /* === Progress + status === */
   .progress {
-    height: 6px; background: #1a2030; border-radius: 3px; overflow: hidden;
+    position: relative;
+    height: 18px; background: #1a2030; border-radius: 9px; overflow: hidden;
     display: none;
   }
   .progress.on { display: block; }
-  .progress > div { height: 100%; background: #2d6cc0; width: 0%; transition: width 0.15s ease; }
+  .progress > .fill {
+    height: 100%; background: linear-gradient(90deg, #2d6cc0, #4288e0);
+    width: 0%; transition: width 0.15s ease;
+  }
+  .progress > .pct {
+    position: absolute; inset: 0; display: flex; align-items: center;
+    justify-content: center;
+    font: 600 12px/1 system-ui, sans-serif; color: #fff;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.5);
+  }
   .status { font-size: 12px; color: #6b7785; min-height: 1.2em; text-align: center; }
   .status.error { color: #d27a7a; }
   .status.ok    { color: #7ad28a; }
@@ -98,6 +161,7 @@
     <span class="pin">📂</span>
     <span class="lbl">Files land in</span>
     <code id="dir">~/Uploads/</code>
+    <button class="link" id="open-files" type="button" disabled>Open in Files →</button>
   </div>
 
   <label class="drop" id="drop">
@@ -112,9 +176,24 @@
     <button id="send" class="primary" disabled>Upload</button>
   </div>
 
-  <div class="progress" id="bar"><div id="fill"></div></div>
+  <div class="progress" id="bar">
+    <div class="fill" id="fill"></div>
+    <div class="pct" id="pct"></div>
+  </div>
   <div class="status" id="status"></div>
-  <div class="list" id="list"></div>
+
+  <div class="section-h">
+    Queued <span class="count" id="queue-count"></span>
+  </div>
+  <div class="list queue" id="list"></div>
+
+  <div class="section-h">
+    In folder <span class="count" id="folder-count"></span>
+    <span class="spacer"></span>
+    <button class="link" id="refresh" type="button">Refresh</button>
+    <button class="link danger" id="clear-folder" type="button" disabled>Clear all</button>
+  </div>
+  <div class="list folder" id="folder"></div>
 
 <script>
 (function() {
@@ -125,8 +204,16 @@
   var clearBtn = document.getElementById('clear');
   var bar    = document.getElementById('bar');
   var fill   = document.getElementById('fill');
+  var pctEl  = document.getElementById('pct');
   var status = document.getElementById('status');
   var dirEl  = document.getElementById('dir');
+  var folderEl     = document.getElementById('folder');
+  var folderCount  = document.getElementById('folder-count');
+  var queueCount   = document.getElementById('queue-count');
+  var refreshBtn   = document.getElementById('refresh');
+  var clearFolder  = document.getElementById('clear-folder');
+  var openFiles    = document.getElementById('open-files');
+  var folderRel    = null;   // path relative to FileBrowser root; set on load
 
   var queue = [];   // [{file, el, state: 'pending'|'done'|'error'}]
 
@@ -142,11 +229,82 @@
     status.className = 'status' + (kind ? ' ' + kind : '');
   }
 
+  function markBadge(q, text) {
+    var b = q.el.querySelector('.badge');
+    if (!b) {
+      b = document.createElement('span');
+      b.className = 'badge';
+      // Insert before the remove (×) button so the badge sits inline.
+      q.el.insertBefore(b, q.el.querySelector('.x'));
+    }
+    b.textContent = text;
+  }
+
   function refreshSendBtn() {
     var pending = queue.filter(function(q) { return q.state === 'pending'; }).length;
     sendBtn.disabled = pending === 0;
     sendBtn.textContent = pending ? ('Upload ' + pending + ' file' + (pending === 1 ? '' : 's')) : 'Upload';
+    queueCount.textContent = pending ? '(' + pending + ')' : '';
   }
+
+  function fmtAge(mtime) {
+    var d = Math.max(0, Math.floor(Date.now() / 1000 - mtime));
+    if (d < 60) return d + 's ago';
+    if (d < 3600) return Math.floor(d / 60) + 'm ago';
+    if (d < 86400) return Math.floor(d / 3600) + 'h ago';
+    return Math.floor(d / 86400) + 'd ago';
+  }
+
+  function renderFolder(files) {
+    folderEl.innerHTML = '';
+    files.forEach(function(f) {
+      var el = document.createElement('div');
+      el.className = 'item';
+      var meta = fmtSize(f.size) + ' · ' + fmtAge(f.mtime);
+      el.innerHTML = '<span class="name"></span><span class="meta"></span>';
+      el.querySelector('.name').textContent = f.name;
+      el.querySelector('.meta').textContent = meta;
+      folderEl.appendChild(el);
+    });
+    folderCount.textContent = files.length ? '(' + files.length + ')' : '';
+    clearFolder.disabled = files.length === 0;
+  }
+
+  function loadFolder() {
+    fetch('/api/upload/list').then(function(r) { return r.json(); }).then(function(d) {
+      if (d.dir) dirEl.textContent = d.dir;
+      folderRel = d.rel_to_home || null;
+      // Only allow the Open-in-Files jump when the upload dir lives under the
+      // FileBrowser root (~). If UPLOAD_DIR is somewhere else, the server
+      // returns rel_to_home: null and we keep the button disabled.
+      openFiles.disabled = !folderRel || (window.top === window);
+      renderFolder(d.files || []);
+    }).catch(function() {
+      folderEl.innerHTML = '<div class="item error"><span class="name">Could not load folder</span></div>';
+      clearFolder.disabled = true;
+    });
+  }
+
+  openFiles.addEventListener('click', function() {
+    if (!folderRel || window.top === window) return;
+    window.top.postMessage({ type: 'open-files-at', path: folderRel }, '*');
+  });
+
+  refreshBtn.addEventListener('click', loadFolder);
+  clearFolder.addEventListener('click', function() {
+    if (!confirm('Delete all files in this folder?')) return;
+    clearFolder.disabled = true;
+    fetch('/api/upload/clear', { method: 'POST' })
+      .then(function(r) { return r.json(); })
+      .then(function(d) {
+        setStatus('Removed ' + (d.removed || 0) + ' file' + ((d.removed === 1) ? '' : 's'), 'ok');
+        loadFolder();
+      })
+      .catch(function() {
+        setStatus('Clear failed', 'error');
+        clearFolder.disabled = false;
+      });
+  });
 
   function addFiles(files) {
     for (var i = 0; i < files.length; i++) {
@@ -201,46 +359,94 @@
     refreshSendBtn();
   });
 
+  // Upload one file at a time so we can show per-file progress in the badge.
+  // Resolves on 2xx, rejects otherwise. onProgress is called with bytes-so-far
+  // for THIS file; the caller adds it to a running total for the page-level
+  // progress bar.
+  function uploadOne(q, onProgress) {
+    return new Promise(function(resolve, reject) {
+      var fd = new FormData();
+      fd.append('file', q.file, q.file.name);
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/upload');
+      markBadge(q, '0%');
+      xhr.upload.onprogress = function(e) {
+        if (!e.lengthComputable) return;
+        var pct = Math.min(100, Math.round(100 * e.loaded / e.total));
+        markBadge(q, pct + '%');
+        onProgress(e.loaded);
+      };
+      xhr.onload = function() {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          var resp = {};
+          try { resp = JSON.parse(xhr.responseText); } catch (e) {}
+          resolve(resp);
+        } else {
+          reject(new Error('HTTP ' + xhr.status));
+        }
+      };
+      xhr.onerror = function() { reject(new Error('network')); };
+      xhr.send(fd);
+    });
+  }
+
   sendBtn.addEventListener('click', function() {
     var pending = queue.filter(function(q) { return q.state === 'pending'; });
     if (!pending.length) return;
-    var fd = new FormData();
-    pending.forEach(function(q) { fd.append('file', q.file, q.file.name); });
 
-    var xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/upload');
-    xhr.upload.onprogress = function(e) {
-      if (!e.lengthComputable) return;
-      bar.classList.add('on');
-      fill.style.width = (100 * e.loaded / e.total).toFixed(1) + '%';
-      setStatus('Uploading… ' + fmtSize(e.loaded) + ' / ' + fmtSize(e.total));
-    };
-    xhr.onload = function() {
-      bar.classList.remove('on'); fill.style.width = '0%';
-      if (xhr.status >= 200 && xhr.status < 300) {
-        var resp = {};
-        try { resp = JSON.parse(xhr.responseText); } catch (e) {}
-        if (resp.dir) dirEl.textContent = resp.dir;
-        pending.forEach(function(q) { q.state = 'done'; q.el.classList.add('done'); });
-        setStatus('Uploaded ' + pending.length + ' file' + (pending.length === 1 ? '' : 's') + ' (' + fmtSize(resp.bytes || 0) + ')', 'ok');
-      } else {
-        pending.forEach(function(q) { q.state = 'error'; q.el.classList.add('error'); });
-        setStatus('Upload failed (HTTP ' + xhr.status + ')', 'error');
-      }
-      refreshSendBtn();
-    };
-    xhr.onerror = function() {
-      bar.classList.remove('on'); fill.style.width = '0%';
-      pending.forEach(function(q) { q.state = 'error'; q.el.classList.add('error'); });
-      setStatus('Network error', 'error');
-      refreshSendBtn();
-    };
+    var totalBytes = pending.reduce(function(a, q) { return a + q.file.size; }, 0);
+    var doneBytes = 0, nDone = 0, nFail = 0;
     sendBtn.disabled = true;
-    setStatus('Uploading…');
-    xhr.send(fd);
+    bar.classList.add('on');
+
+    function step(i) {
+      if (i >= pending.length) {
+        bar.classList.remove('on');
+        fill.style.width = '0%';
+        pctEl.textContent = '';
+        if (nFail === 0) {
+          setStatus('Uploaded ' + nDone + ' file' + (nDone === 1 ? '' : 's'), 'ok');
+        } else {
+          setStatus(nDone + ' uploaded · ' + nFail + ' failed', 'error');
+        }
+        refreshSendBtn();
+        return;
+      }
+      var q = pending[i];
+      setStatus(
+        'Uploading ' + (i + 1) + '/' + pending.length + ' · ' +
+        fmtSize(doneBytes) + ' / ' + fmtSize(totalBytes)
+      );
+      uploadOne(q, function(loaded) {
+        var overall = doneBytes + loaded;
+        var pct = 100 * overall / totalBytes;
+        fill.style.width = pct.toFixed(1) + '%';
+        pctEl.textContent = pct.toFixed(0) + '%';
+      }).then(function(resp) {
+        if (resp && resp.dir) dirEl.textContent = resp.dir;
+        doneBytes += q.file.size;
+        nDone++;
+        q.state = 'done';
+        q.el.classList.remove('error');
+        q.el.classList.add('done');
+        markBadge(q, '✓ Done');
+        loadFolder();   // refresh after each successful upload
+        step(i + 1);
+      }).catch(function() {
+        doneBytes += q.file.size;   // skip past it so progress doesn't stall
+        nFail++;
+        q.state = 'error';
+        q.el.classList.remove('done');
+        q.el.classList.add('error');
+        markBadge(q, 'Failed');
+        step(i + 1);
+      });
+    }
+    step(0);
   });
 
   refreshSendBtn();
+  loadFolder();
 })();
 </script>
 </body>
