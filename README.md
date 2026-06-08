@@ -2,7 +2,19 @@
 
 A unified "mini-OS" desktop experience served in the browser, exposed publicly
 over HTTPS via Cloudflare Tunnel with Access auth. The root page is a desktop-like
-UI with five tabs: **Home, Terminal, Browser, Files, and Notes**.
+UI launchable from a Start menu with seven apps: **Home Service, Terminal,
+Browser, Files, Notes, Monitor, Upload**. Open-app state is synced server-side
+so phone and computer share the same desktop.
+
+## Features
+
+- **Terminal** — persistent bash sessions over ttyd; tabs survive disconnects via a custom `claude-session` daemon (256 KB ring buffer + 50k-line xterm.js scrollback)
+- **Browser** — a real, persistent Chromium driven by xpra's HTML5 client; mobile gets tap-click, drag-scroll, two-finger pinch zoom, and a toggleable on-screen keyboard
+- **Files** — FileBrowser rooted at `~`, every toolbar action visible inline (wraps to multiple rows on mobile)
+- **Notes** — single-page Markdown scratchpad, auto-saves
+- **Monitor** — live CPU/MEM/GPU charts, htop-style load average, top processes
+- **Upload** — quick photo-sync drop zone; per-file progress, In-folder listing, Open-in-Files deep link
+- **Status bar** — live system stats (CPU %/°, MEM, GPU %/°, VRAM) at the bottom of every desktop; falls back to debugfs when sysfs locks under GPU compute
 
 ## Sub-projects
 
@@ -38,4 +50,4 @@ commands, and [`docs/`](docs/) for deep dives.
 
 | Mobile — Start menu | Mobile — Terminal + keyboard |
 |---|---|
-| ![Mobile view: Terminal app showing four persistent ttyd tabs (T1–T4) with `echo "hello world"` running in T2. The Start menu is open over the app, listing Home Service, Terminal, Browser, Files, Notes, and Monitor — running apps marked with a green dot.](docs/images/mobile-startmenu.jpg) | ![Mobile view: tapping inside Terminal pops the native iOS keyboard. xterm.js fits the visible portion and the iOS text-suggestion bar sits between the terminal and the keyboard.](docs/images/mobile-keyboard.jpg) |
+| ![Mobile view: Terminal app showing four persistent ttyd tabs (T1–T4) with `echo "hello world"` running in T2. The Start menu is open over the app, listing Home Service, Terminal, Browser, Files, Notes, Monitor, and Upload — running apps marked with a green dot.](docs/images/mobile-startmenu.jpg) | ![Mobile view: tapping inside Terminal pops the native iOS keyboard. xterm.js fits the visible portion and the iOS text-suggestion bar sits between the terminal and the keyboard.](docs/images/mobile-keyboard.jpg) |
