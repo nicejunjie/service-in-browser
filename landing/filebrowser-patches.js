@@ -22,17 +22,25 @@
     "header #dropdown .action i { font-size: 20px !important; margin: 0 !important; padding: 2px !important; display: block !important; }",
     "header .fb-permanent.disabled { opacity: 0.25 !important; pointer-events: none !important; }",
     // Mobile: let the action toolbar wrap to multiple rows instead of clipping
-    // buttons off the right edge. FileBrowser's header is a single nowrap flex
-    // row by default; on narrow viewports we relax that and grow the header
-    // height to accommodate however many rows are needed.
+    // buttons off the right edge OR collapsing them into a "..." overflow menu.
+    // FileBrowser's stock behavior on narrow viewports is to hide extras inside
+    // a popup #dropdown opened by a "more" button; we instead force #dropdown
+    // to render inline + wrapped and hide the more-button so every action is
+    // visible without an extra tap.
     "@media (max-width: 736px) {",
     "  header { flex-wrap: wrap !important; height: auto !important; min-height: 4em !important; row-gap: 4px !important; padding-top: 4px !important; padding-bottom: 4px !important; }",
-    "  header #dropdown { flex-wrap: wrap !important; height: auto !important; row-gap: 4px !important; }",
+    "  header #dropdown { display: flex !important; flex-wrap: wrap !important; position: static !important; visibility: visible !important; opacity: 1 !important; transform: none !important; box-shadow: none !important; background: transparent !important; height: auto !important; max-height: none !important; row-gap: 4px !important; padding: 0 !important; }",
     "  header .action, header .action.fb-permanent { flex: 0 0 auto !important; }",
-    // FileBrowser uses a fixed top offset on the main content equal to header
-    // height; push it down so the wrapped toolbar doesn't overlap the file list.
+    // Hide FileBrowser's "..." / more-actions trigger so the dropdown buttons
+    // stay flattened into the header instead of being a popup.
+    "  header > .action[aria-haspopup], header .action.show-more, header > .action.more, header > .action[title=\"More\"], header > .action[aria-label=\"More\"] { display: none !important; }",
     "  main { margin-top: 0 !important; padding-top: 0 !important; }",
     "}",
+    // Hide FileBrowser's selection-action popups: #file-selection is the
+    // bottom-floating "X selected · [icons]" bar that appears on mobile when a
+    // file is tapped; .context-menu is the right-click / long-press menu.
+    // Every action already lives in the top toolbar, so both are redundant.
+    "#file-selection, .context-menu { display: none !important; }",
   ].join("\n");
   document.head.appendChild(style);
 
