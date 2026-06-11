@@ -1,10 +1,13 @@
-# service-in-browser
+# Vibetop
+
+**Your self-hosted machine, as a desktop in any browser tab — even your phone.**
 
 A unified "mini-OS" desktop experience served in the browser, exposed publicly
 over HTTPS via Cloudflare Tunnel with Access auth. The root page is a desktop-like
 UI launchable from a Start menu with seven apps: **Home Service, Terminal,
 Browser, Files, Notes, Monitor, Upload**. Open-app state is synced server-side
-so phone and computer share the same desktop.
+so phone and computer share the same desktop. Installable as a PWA; the Terminal
+even keeps live dictation working on iOS.
 
 ## Features
 

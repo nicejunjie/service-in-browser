@@ -8,7 +8,7 @@
      the shell keeps the desktop layout pinned at 1.0; each app handles its
      own zoom internally (xpra zooms its canvas, text apps don't need it). -->
 <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
-<title>myhost</title>
+<title>Vibetop</title>
 <!-- PWA: installable, full-screen home-screen app. The manifest + apple-* tags
      make "Add to Home Screen" launch standalone (no Safari chrome), and sw.js
      caches the shell so cold loads are instant. -->
@@ -16,7 +16,7 @@
 <meta name="theme-color" content="#161b22">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
-<meta name="apple-mobile-web-app-title" content="myhost">
+<meta name="apple-mobile-web-app-title" content="Vibetop">
 <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
@@ -238,7 +238,7 @@
     <div class="sm-item" data-id="upload"><div class="sm-icon">⬆</div><div><div class="sm-name">Upload</div><div class="sm-desc">Quick file upload to ~/Uploads</div></div></div>
     <div class="sm-title sm-title-system">System</div>
     <div class="sm-item" data-id="update"><div class="sm-icon">⬇</div><div><div class="sm-name">Update</div><div class="sm-desc">Pull latest from GitHub &amp; redeploy</div></div></div>
-    <div class="sm-build">myhost · v1.0.0</div>
+    <div class="sm-build">Vibetop · v1.0.0</div>
   </div>
 
   <div class="taskbar" id="taskbar">
@@ -432,7 +432,7 @@
     renderTaskbar();
     persist();
     updateKbdBar();
-    document.title = id ? (APPS[id].label + ' — myhost') : 'myhost';
+    document.title = id ? (APPS[id].label + ' — Vibetop') : 'Vibetop';
     var f = id && frameOf(id);
     if (f) {
       loadIfNeeded(f);
