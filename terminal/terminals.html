@@ -315,12 +315,12 @@
     if (e.data.type === 'focus-terminal' && active) {
       focusTerminal(active);
     }
-    // Relay composed text from the desktop's Compose & Send bar down to the
-    // active /tN/ iframe, which pastes it into the PTY (see terminal/install.sh).
-    if (e.data.type === 'term-input' && active) {
+    // Relay keystrokes from the desktop's implicit keyboard down to the active
+    // /tN/ iframe, which turns them into raw PTY input (see terminal/install.sh).
+    if ((e.data.type === 'kbd-char' || e.data.type === 'kbd-key') && active) {
       var f = document.getElementById('frame-' + active);
       if (f && f.contentWindow) {
-        try { f.contentWindow.postMessage({ type: 'term-input', text: e.data.text }, '*'); } catch (err) {}
+        try { f.contentWindow.postMessage(e.data, '*'); } catch (err) {}
       }
     }
   });

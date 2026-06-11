@@ -196,33 +196,31 @@
     .startmenu { left: 8px; right: 8px; width: auto; }
   }
 
-  /* === Compose & Send bar (touch only) ===
+  /* === Implicit keyboard ⌨ button (touch only) ===
      Browser (xpra canvas) and Terminal (xterm) take keyboard input but have no
-     DOM field of their own, and live keystroke-mirroring breaks under iOS
-     dictation (it rewrites text non-linearly). So the user types/dictates into
-     THIS visible box in the top-level shell — directly tapping a real input
-     reliably raises the native keyboard — then taps Send to forward the final
-     text once. Shown only while Browser/Terminal is active on a touch device.
-     Floats just above the on-screen keyboard. */
-  #kbd-compose {
-    position: fixed; left: 8px; right: 8px; bottom: calc(var(--tb) + 8px); z-index: 95;
-    display: none; align-items: center; gap: 6px; padding: 6px;
-    background: #161b22; border: 1px solid #2a3040; border-radius: 10px;
-    box-shadow: 0 4px 16px rgba(0,0,0,.55);
+     DOM field of their own, and live-typing into the terminal's own textarea
+     breaks under iOS dictation. So a HIDDEN <input> in the top page captures all
+     input and forwards it live to the active app. iOS only raises the keyboard
+     when you tap a real input, so the input is styled as this small ⌨ button
+     (transparent text; the glyph is a pointer-events:none overlay so taps land
+     on the input). No visible compose box — text appears straight in the app. */
+  #kbd-btn {
+    position: fixed; right: 8px; top: 42%; z-index: 95;
+    width: 50px; height: 50px; border-radius: 25px; display: none;
+    background: #2d6cc0; border: 1px solid #2d6cc0; box-shadow: 0 4px 14px rgba(0,0,0,.5);
+    touch-action: manipulation; -webkit-user-select: none; user-select: none;
   }
-  body.kbd-on #kbd-compose { display: flex; }
-  #kbd-text {
-    flex: 1; min-width: 0; height: 40px; border-radius: 8px;
-    border: 1px solid #2a3040; background: #0e1117; color: #e6ebf2;
-    padding: 0 12px; font-size: 16px; outline: none;
+  body.kbd-on #kbd-btn { display: block; }
+  #kbd-btn.open { background: #d23a2a; border-color: #d23a2a; }
+  #kbd-input {
+    position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; padding: 0;
+    border: 0; outline: none; background: transparent; color: transparent;
+    caret-color: transparent; font-size: 16px; text-align: center; cursor: pointer; z-index: 1;
   }
-  #kbd-text:focus { border-color: #2d6cc0; }
-  #kbd-compose button {
-    flex: 0 0 auto; height: 40px; border-radius: 8px; cursor: pointer;
-    border: 1px solid #2d6cc0; font: 600 14px system-ui, sans-serif;
+  #kbd-ico {
+    position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+    pointer-events: none; font: 600 22px system-ui, sans-serif; color: #fff;
   }
-  #kbd-send  { padding: 0 16px; background: #2d6cc0; color: #fff; }
-  #kbd-enter { padding: 0 13px; background: rgba(45,108,192,.18); color: #cfe0f5; font-size: 17px; }
 </style>
 </head>
 <body>
@@ -240,7 +238,7 @@
     <div class="sm-item" data-id="upload"><div class="sm-icon">⬆</div><div><div class="sm-name">Upload</div><div class="sm-desc">Quick file upload to ~/Uploads</div></div></div>
     <div class="sm-title sm-title-system">System</div>
     <div class="sm-item" data-id="update"><div class="sm-icon">⬇</div><div><div class="sm-name">Update</div><div class="sm-desc">Pull latest from GitHub &amp; redeploy</div></div></div>
-    <div class="sm-build">build kbd-8</div>
+    <div class="sm-build">build kbd-9</div>
   </div>
 
   <div class="taskbar" id="taskbar">
@@ -266,12 +264,9 @@
   </div>
 
   <!-- Browser keyboard button (top-level so iOS reliably raises the keyboard) -->
-  <!-- Compose & Send bar (touch, Browser/Terminal): type or dictate, then Send -->
-  <div id="kbd-compose">
-    <input id="kbd-text" type="text" placeholder="Type or dictate, then Send →" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false">
-    <button id="kbd-enter" type="button" title="Send Enter">↵</button>
-    <button id="kbd-send" type="button">Send</button>
-  </div>
+  <!-- Implicit keyboard (touch, Browser/Terminal): tap the ⌨ button to raise the
+       keyboard, then type/dictate — input forwards live into the active app. -->
+  <div id="kbd-btn" title="Keyboard"><input id="kbd-input" type="text" autocapitalize="off" autocomplete="off" autocorrect="off" spellcheck="false"><span id="kbd-ico">⌨</span></div>
 
 <script>
 (function() {
@@ -298,74 +293,67 @@
   var openApps = [];   // ids, in taskbar order
   var active   = null;
 
-  // --- Browser keyboard relay -------------------------------------------------
-  // The Browser app is a remote canvas with no DOM input to tap, so we host a
-  // real <input> here in the top page (where iOS reliably raises the keyboard)
-  // and forward every keystroke into the Browser iframe via postMessage. Shown
-  // only while Browser is the active app on a touch device.
+  // --- Implicit keyboard relay -----------------------------------------------
+  // Browser (xpra canvas) and Terminal (xterm) take keyboard input but have no
+  // DOM field of their own, and live-typing into the terminal's own textarea
+  // breaks under iOS dictation. So a HIDDEN <input> in the top page captures all
+  // input and forwards it LIVE to whichever app is active — no visible box, no
+  // Send; you just type/dictate and it appears in the app. iOS only raises the
+  // keyboard when you tap a real input, so the input is styled as a small ⌨
+  // button you tap to start (the only visible UI). Forwarding is a debounced
+  // value-diff that ignores iOS dictation's transient empty-clear, so it can't
+  // pile up. Browser interprets kbd-char/kbd-key via xpra; Terminal turns them
+  // into raw PTY input (relayed via terminals.html → the active /tN/).
   var IS_TOUCH = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
-  // Compose & Send: instead of mirroring keystrokes live (which iOS dictation
-  // breaks — it rewrites text non-linearly), the user types/dictates into a
-  // VISIBLE box and taps Send, and we forward the FINAL text once. No live
-  // diffing, so dictation can't pile up. Works for Browser and Terminal (the
-  // two apps that take keyboard input through a remote/canvas with no DOM
-  // field of their own): Browser gets each char as a key event to xpra;
-  // Terminal gets the whole string pasted into the PTY (relayed via
-  // terminals.html → the active /tN/).
-  (function setupKbdCompose() {
-    var bar = document.getElementById('kbd-compose');
-    var text = document.getElementById('kbd-text');
-    var sendBtn = document.getElementById('kbd-send');
-    var enterBtn = document.getElementById('kbd-enter');
-    if (!bar || !text) return;
+  (function setupKbd() {
+    var btn = document.getElementById('kbd-btn');
+    var input = document.getElementById('kbd-input');
+    var ico = document.getElementById('kbd-ico');
+    if (!btn || !input) return;
+    var lastVal = '', composing = false, flushTimer = null;
 
-    function toFrame(id, msg) {
+    // Forward to the active app's iframe: Browser directly; Terminal via
+    // terminals.html (which relays to the active /tN/).
+    function toApp(msg) {
+      var id = (active === 'terminal') ? 'terminal' : 'browser';
       var f = document.getElementById('frame-' + id);
       if (f && f.contentWindow) { try { f.contentWindow.postMessage(msg, '*'); } catch (e) {} }
     }
-    function sendText() {
-      var t = text.value;
-      if (!t) { text.focus(); return; }
-      if (active === 'terminal') {
-        toFrame('terminal', { type: 'term-input', text: t });
-      } else {
-        for (var i = 0; i < t.length; i++) {
-          var ch = t.charAt(i);
-          if (ch === '\n') toFrame('browser', { type: 'kbd-key', key: 'Enter' });
-          else if (ch === '\t') toFrame('browser', { type: 'kbd-key', key: 'Tab' });
-          else toFrame('browser', { type: 'kbd-char', ch: ch });
-        }
-      }
-      text.value = '';
-      text.focus();   // keep the keyboard up for the next line
+    function flush() {
+      if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
+      var v = input.value;
+      // Ignore iOS dictation's transient clear-to-"" between revisions (would
+      // otherwise emit backspaces + re-type the word: the pile-up). The
+      // transcription grows by prefix-extension, so this keeps it pure-append.
+      if (v === '' && lastVal !== '') return;
+      var i = 0, min = Math.min(v.length, lastVal.length);
+      while (i < min && v.charAt(i) === lastVal.charAt(i)) i++;
+      for (var d = lastVal.length - i; d > 0; d--) toApp({ type: 'kbd-key', key: 'Backspace' });
+      for (var j = i; j < v.length; j++) toApp({ type: 'kbd-char', ch: v.charAt(j) });
+      lastVal = v;
     }
-    function sendEnter() {
-      if (active === 'terminal') toFrame('terminal', { type: 'term-input', text: '\r' });
-      else toFrame('browser', { type: 'kbd-key', key: 'Enter' });
-      text.focus();
-    }
-    sendBtn.addEventListener('click', sendText);
-    enterBtn.addEventListener('click', sendEnter);
-    text.addEventListener('keydown', function(e) {
-      if (e.key === 'Enter') { e.preventDefault(); sendText(); }
-    });
+    function reset() { if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; } input.value = ''; lastVal = ''; }
+    function scheduleFlush(ms) { if (flushTimer) clearTimeout(flushTimer); flushTimer = setTimeout(function() { flushTimer = null; flush(); }, ms); }
 
-    // Float the bar just above the on-screen keyboard (visualViewport reflects
-    // the keyboard height in the top-level page; in an iframe it wouldn't).
-    function position() {
-      if (!window.visualViewport) return;
-      var kb = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
-      bar.style.bottom = kb > 50 ? (kb + 8) + 'px' : '';
-    }
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', position);
-      window.visualViewport.addEventListener('scroll', position);
-    }
+    input.addEventListener('focus', function() { btn.classList.add('open'); ico.textContent = '✕'; });
+    input.addEventListener('blur',  function() { flush(); btn.classList.remove('open'); ico.textContent = '⌨'; });
+    input.addEventListener('compositionstart', function() { composing = true; });
+    input.addEventListener('compositionend', function() { composing = false; scheduleFlush(60); });
+    input.addEventListener('input', function(e) { scheduleFlush((composing || (e && e.isComposing)) ? 450 : 80); });
+    input.addEventListener('keydown', function(e) {
+      if (e.key === 'Enter')        { e.preventDefault(); flush(); toApp({ type: 'kbd-key', key: 'Enter' }); reset(); }
+      else if (e.key === 'Tab')     { e.preventDefault(); toApp({ type: 'kbd-key', key: 'Tab' }); }
+      else if (e.key === 'Backspace' && input.value === '') { e.preventDefault(); toApp({ type: 'kbd-key', key: 'Backspace' }); }
+    });
+    // Tap the ⌨ button while the keyboard is up → dismiss (blur, which flushes).
+    input.addEventListener('pointerdown', function(e) {
+      if (document.activeElement === input) { e.preventDefault(); input.blur(); }
+    });
   })();
   function updateKbdBar() {
     var on = IS_TOUCH && (active === 'browser' || active === 'terminal');
     document.body.classList.toggle('kbd-on', on);
-    if (!on) { var t = document.getElementById('kbd-text'); if (t) try { t.blur(); } catch (e) {} }
+    if (!on) { var t = document.getElementById('kbd-input'); if (t) try { t.blur(); } catch (e) {} }
   }
 
   // Persist open-apps + active to the manager API so phones and computers
