@@ -82,6 +82,26 @@
       else if (e.key === 'Backspace' && ov.value === '') { e.preventDefault(); sendRaw(String.fromCharCode(127)); }
     });
 
+    // Keep the terminal fitted ABOVE the on-screen keyboard: size the page to
+    // the visual viewport so xterm re-fits to the visible rows and the prompt
+    // stays visible (instead of hiding behind the keyboard). visualViewport
+    // shrinks when the keyboard appears.
+    function fitVV() {
+      var vv = window.visualViewport; if (!vv) return;
+      var h = Math.round(vv.height);
+      document.documentElement.style.height = h + 'px';
+      document.body.style.height = h + 'px';
+      document.body.style.overflow = 'hidden';
+      ov.style.height = h + 'px';
+      try { window.dispatchEvent(new Event('resize')); } catch (e) {}  // nudge xterm fit-addon
+      dbg(' [vv h=' + h + '] ');
+    }
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener('resize', fitVV);
+      window.visualViewport.addEventListener('scroll', fitVV);
+      fitVV();
+    }
+
     // Vertical drag → terminal scrollback (so the cover doesn't kill scrolling).
     var sy = 0, acc = 0, moved = false;
     ov.addEventListener('touchstart', function (e) { sy = e.touches[0].clientY; acc = 0; moved = false; }, { passive: true });
