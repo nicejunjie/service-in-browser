@@ -12,6 +12,12 @@
   // coordinates by .z so taps still land correctly while magnified.
   var VIEWZOOM = { z: 1, px: 0, py: 0, min: 1, max: 6 };
 
+  // Shared keyboard hooks — patch 3 builds the hidden native input and assigns
+  // these; the touch layer (patch 4) calls them to raise/dismiss the keyboard
+  // on tap/two-finger-tap, so there's no on-screen keyboard button.
+  var kbdFocus = null, kbdBlur = null, kbdLastBlur = 0;
+  var kbdSendChar = null, kbdSendKey = null;   // exposed by patch 3 for paste (patch 5)
+
   // 0. Suppress "leave site?" confirmation on refresh/close.
   try {
     window.onbeforeunload = null;
@@ -93,72 +99,93 @@
     console.warn('[xpra-patches] scroll patch failed:', e.message);
   }
 
-  // 3. Mobile on-screen keyboard. We hide xpra's permanent simple-keyboard and
-  //    show/hide it via a floating button. We can't auto-detect taps on remote
-  //    text inputs (the screen is a canvas — there's no DOM to introspect), so
-  //    auto-showing on any tap was too aggressive. The button sits at the
-  //    bottom-right (thumb-reachable) when closed and morphs into a red
-  //    "✕ Hide" pill above the keyboard when open. Two-finger gestures are
-  //    NOT intercepted so xpra's native pinch handling keeps working.
+  // 3. Mobile keyboard — use the NATIVE iOS/Android keyboard instead of xpra's
+  //    drawn `.simple-keyboard`, and with NO on-screen button: a 1-finger tap
+  //    raises it (like the terminal), a 2-finger tap dismisses it (both wired
+  //    in patch 4 via kbdFocus/kbdBlur). A hidden real <input> receives the
+  //    native keyboard; each character typed is forwarded to the remote as a
+  //    synthetic key event (the same channel xpra forwards — its handlers don't
+  //    check isTrusted). We diff the input's value on every `input` event so
+  //    backspace and autocorrect replacements work; Enter/Tab/empty-backspace
+  //    go via keydown.
   try {
     var css = document.createElement('style');
     css.textContent =
-      '.simple-keyboard{display:none!important}' +
-      'body.xpra-vkb .simple-keyboard{display:block!important}' +
-      // Closed: ⌨ chip at the bottom-right where the thumb rests on mobile.
-      '#vkb-toggle{position:fixed;right:12px;bottom:calc(12px + env(safe-area-inset-bottom));' +
-        'z-index:2147483647;min-width:48px;height:48px;padding:0 14px;border-radius:24px;' +
-        'background:#2d6cc0;color:#fff;border:1px solid #2d6cc0;box-shadow:0 4px 14px rgba(0,0,0,.5);' +
-        'font:600 18px/48px system-ui,sans-serif;text-align:center;cursor:pointer;' +
-        '-webkit-user-select:none;user-select:none;display:none;' +
-        'touch-action:manipulation;white-space:nowrap}' +
-      // Open: red dismiss pill. `bottom` is set dynamically in JS to sit right
-      // above the actual keyboard, since the keyboard's height varies by
-      // device/orientation. The CSS fallback (40vh) is a rough guess used only
-      // until the first measurement lands.
-      'body.xpra-vkb #vkb-toggle{bottom:calc(40vh + 4px);' +
-        'background:#d23a2a;color:#fff;border-color:#d23a2a;padding:0 18px;font-size:15px}' +
-      '@media (max-width:900px),(pointer:coarse){#vkb-toggle{display:inline-block}}';
+      '.simple-keyboard{display:none!important}' +     // never show xpra's drawn keyboard
+      // Hidden but focusable input. font-size:16px stops iOS zooming on focus;
+      // kept invisible (opacity/transparent) rather than display:none, which
+      // would block focus() from raising the keyboard.
+      '#xpra-kbd{position:fixed;bottom:0;left:0;width:1px;height:1px;opacity:0;' +
+        'border:0;padding:0;margin:0;font-size:16px;z-index:-1;' +
+        'color:transparent;background:transparent;caret-color:transparent}';
     document.head.appendChild(css);
 
-    var addBtn = function() {
-      if (document.getElementById('vkb-toggle')) return;
-      var b = document.createElement('div');
-      b.id = 'vkb-toggle';
-      b.title = 'Toggle keyboard';
-      var positionAboveKbd = function() {
-        var kbd = document.querySelector('.simple-keyboard');
-        if (!kbd) { b.style.bottom = ''; return; }
-        var r = kbd.getBoundingClientRect();
-        if (r.height > 0) b.style.bottom = (window.innerHeight - r.top + 4) + 'px';
-      };
-      var setState = function() {
-        var open = document.body.classList.contains('xpra-vkb');
-        b.textContent = open ? '✕  Hide keyboard' : '⌨';
-        if (open) {
-          // Defer one frame so the keyboard has laid out, then re-measure.
-          requestAnimationFrame(positionAboveKbd);
-        } else {
-          b.style.bottom = '';
-        }
-      };
-      setState();
-      var toggle = function(ev) {
-        ev.preventDefault();
-        ev.stopPropagation();
-        document.body.classList.toggle('xpra-vkb');
-        setState();
-      };
-      // Reposition on viewport changes (rotation, address-bar collapse, etc.).
-      window.addEventListener('resize', function() {
-        if (document.body.classList.contains('xpra-vkb')) positionAboveKbd();
+    var kbdInput = null, lastVal = '';
+
+    // Dispatch a key press+release on document; xpra reads event.code / key /
+    // keyCode to build the keysym (229 is the IME-composition sentinel — we
+    // never send it, so real characters always go through).
+    var sendKey = function(key, code, keyCode, shift) {
+      ['keydown', 'keyup'].forEach(function(type) {
+        document.dispatchEvent(new KeyboardEvent(type, {
+          key: key, code: code || '', keyCode: keyCode || 0, which: keyCode || 0,
+          shiftKey: !!shift, bubbles: true, cancelable: true
+        }));
       });
-      b.addEventListener('touchend', toggle, { passive: false });
-      b.addEventListener('click', toggle);
-      document.body.appendChild(b);
     };
-    if (document.body) addBtn();
-    else document.addEventListener('DOMContentLoaded', addBtn);
+    var sendChar = function(ch) {
+      var code = '', kc = ch.charCodeAt(0), shift = false, up = ch.toUpperCase();
+      if (ch >= 'a' && ch <= 'z')      { code = 'Key' + up;  kc = up.charCodeAt(0); }
+      else if (ch >= 'A' && ch <= 'Z') { code = 'Key' + ch;  kc = ch.charCodeAt(0); shift = true; }
+      else if (ch >= '0' && ch <= '9') { code = 'Digit' + ch; kc = ch.charCodeAt(0); }
+      else if (ch === ' ')             { code = 'Space'; kc = 32; }
+      // Other symbols: leave code empty; xpra maps them from event.key.
+      sendKey(ch, code, kc, shift);
+    };
+    var resetBuf = function() { if (kbdInput) kbdInput.value = ''; lastVal = ''; };
+
+    // Diff the input value: deletions after the common prefix → Backspace,
+    // the remaining new tail → forwarded char-by-char. Survives autocorrect
+    // (which deletes a word then inserts the replacement).
+    var onInput = function() {
+      var v = kbdInput.value, i = 0, min = Math.min(v.length, lastVal.length);
+      while (i < min && v.charAt(i) === lastVal.charAt(i)) i++;
+      for (var d = lastVal.length - i; d > 0; d--) sendKey('Backspace', 'Backspace', 8);
+      for (var j = i; j < v.length; j++) sendChar(v.charAt(j));
+      lastVal = v;
+      if (v.length > 80) resetBuf();   // keep the hidden buffer small
+    };
+    var onKeydown = function(e) {
+      if (e.key === 'Enter')   { e.preventDefault(); sendKey('Enter', 'Enter', 13); resetBuf(); }
+      else if (e.key === 'Tab'){ e.preventDefault(); sendKey('Tab', 'Tab', 9); }
+      else if (e.key === 'Backspace' && kbdInput.value === '') {
+        // Empty buffer → the diff sees no change; forward Backspace directly so
+        // the user can keep deleting remote content past what they just typed.
+        e.preventDefault(); sendKey('Backspace', 'Backspace', 8);
+      }
+      // printable keys + non-empty backspace are handled by onInput's diff
+    };
+
+    var build = function() {
+      if (document.getElementById('xpra-kbd')) return;
+      kbdInput = document.createElement('input');
+      kbdInput.id = 'xpra-kbd';
+      kbdInput.type = 'text';
+      kbdInput.setAttribute('autocapitalize', 'off');
+      kbdInput.setAttribute('autocomplete', 'off');
+      kbdInput.setAttribute('autocorrect', 'off');
+      kbdInput.spellcheck = false;
+      kbdInput.addEventListener('input', onInput);
+      kbdInput.addEventListener('keydown', onKeydown);
+      kbdInput.addEventListener('blur', function() { kbdLastBlur = Date.now(); });
+      document.body.appendChild(kbdInput);
+      // Expose to the touch layer (patch 4): tap raises, 2-finger tap dismisses.
+      kbdFocus = function() { resetBuf(); try { kbdInput.focus(); } catch (e) {} };
+      kbdBlur  = function() { try { kbdInput.blur(); } catch (e) {} };
+    };
+    kbdSendChar = sendChar; kbdSendKey = sendKey;   // for the paste patch (5)
+    if (document.body) build();
+    else document.addEventListener('DOMContentLoaded', build);
   } catch(e) {
     console.warn('[xpra-patches] keyboard patch failed:', e.message);
   }
@@ -195,10 +222,6 @@
       VIEWZOOM.z = newZ;
       applyZoom();
     };
-    var zoomBy = function(factor, cx, cy) {
-      if (cx == null) { cx = window.innerWidth / 2; cy = window.innerHeight / 2; }
-      zoomAt(cx, cy, VIEWZOOM.z * factor);
-    };
     var zoomReset = function() { VIEWZOOM.z = 1; VIEWZOOM.px = 0; VIEWZOOM.py = 0; applyZoom(); };
     var midpoint = function(t) {
       return { x: (t[0].clientX + t[1].clientX) / 2, y: (t[0].clientY + t[1].clientY) / 2 };
@@ -213,10 +236,11 @@
     //
     // We take over all touch events on the screen entirely:
     //   - 2 fingers → pinch magnifies the view (CSS transform, no remote zoom)
+    //   - 2-finger tap (no pinch) → dismiss the native keyboard
     //   - 1 finger drag, zoomed in → pan the magnified view
     //   - 1 finger drag, at 1x → wheel events sent to remote (scroll the page)
-    //   - 1 finger, no movement → synthetic mousedown/mouseup at touch point
-    //     forwarded to xpra as a click
+    //   - 1 finger, no movement → click at the touch point AND raise the native
+    //     keyboard (like the terminal — there's no on-screen keyboard button)
     //
     // xpra's wheel and mouse handlers on #screen forward synthetic events to
     // the remote just fine (its forwarders don't check event.isTrusted).
@@ -237,7 +261,8 @@
     // dividing the raw finger delta keeps page scroll close to finger speed.
     // Higher value = slower scroll relative to finger.
     var SCROLL_TICK = 33;
-    var touch = { mode: null, sx: 0, sy: 0, lx: 0, ly: 0, pinch: 0, accum: 0, accumX: 0 };
+    var touch = { mode: null, sx: 0, sy: 0, lx: 0, ly: 0, pinch: 0, pinch0: 0,
+                  accum: 0, accumX: 0, twoFinger: false };
 
     var fireWheel = function(x, y, dx, dy) {
       var c = canvasGet(); if (!c) return;
@@ -259,7 +284,8 @@
     window.addEventListener('touchstart', function(e) {
       if (e.touches.length === 2) {
         touch.mode = 'pinch';
-        touch.pinch = dist2(e.touches);
+        touch.pinch = touch.pinch0 = dist2(e.touches);
+        touch.twoFinger = true;       // a clean 2-finger tap dismisses the keyboard
         e.preventDefault(); e.stopPropagation();
       } else if (e.touches.length === 1) {
         var t = e.touches[0];
@@ -267,6 +293,7 @@
         touch.sx = touch.lx = t.clientX;
         touch.sy = touch.ly = t.clientY;
         touch.accum = 0; touch.accumX = 0;
+        touch.twoFinger = false;
         e.preventDefault(); e.stopPropagation();
       }
     }, { passive: false, capture: true });
@@ -276,6 +303,7 @@
         e.preventDefault(); e.stopPropagation();
         // Continuous magnification anchored at the pinch midpoint, like Safari.
         var d = dist2(e.touches);
+        if (Math.abs(d - touch.pinch0) > 8) touch.twoFinger = false;  // real pinch, not a tap
         if (touch.pinch > 0) {
           var mid = midpoint(e.touches);
           zoomAt(mid.x, mid.y, VIEWZOOM.z * (d / touch.pinch));
@@ -291,6 +319,7 @@
           }
         }
         if (touch.mode === 'scroll') {
+          touch.twoFinger = false;   // dragging is never a 2-finger tap
           var ddx = t.clientX - touch.lx, ddy = t.clientY - touch.ly;
           touch.lx = t.clientX; touch.ly = t.clientY;
           if (VIEWZOOM.z > 1.001) {
@@ -316,8 +345,17 @@
     window.addEventListener('touchend', function(e) {
       e.preventDefault(); e.stopPropagation();
       if (e.touches.length === 0) {
-        if (touch.mode === null) fireTap(touch.sx, touch.sy);
+        if (touch.twoFinger) {
+          // clean 2-finger tap → dismiss the native keyboard
+          if (kbdBlur) kbdBlur();
+        } else if (touch.mode === null) {
+          // 1-finger tap → click, then raise the native keyboard (unless we just
+          // dismissed it — don't let the dismissing tap immediately reopen it).
+          fireTap(touch.sx, touch.sy);
+          if (kbdFocus && Date.now() - kbdLastBlur > 500) kbdFocus();
+        }
         touch.mode = null;
+        touch.twoFinger = false;
       } else if (e.touches.length === 1 && touch.mode === 'pinch') {
         // One finger lifted during pinch — switch to scroll mode using the
         // remaining finger, no tap on its eventual release.
@@ -331,42 +369,39 @@
 
     window.addEventListener('touchcancel', function() {
       touch.mode = null;
+      touch.twoFinger = false;
     }, { passive: true, capture: true });
-
-    // --- Visible zoom buttons (mobile only) ---
-    var zoomCss = document.createElement('style');
-    zoomCss.textContent =
-      '#vkb-zoom{position:fixed;left:12px;bottom:calc(12px + env(safe-area-inset-bottom));' +
-        'z-index:2147483647;display:none;gap:6px;' +
-        'touch-action:manipulation;-webkit-user-select:none;user-select:none}' +
-      '#vkb-zoom button{width:44px;height:44px;border-radius:22px;border:1px solid #2d6cc0;' +
-        'background:rgba(45,108,192,.85);color:#fff;font:600 20px/44px system-ui,sans-serif;' +
-        'box-shadow:0 4px 14px rgba(0,0,0,.5);padding:0;cursor:pointer}' +
-      '@media (max-width:900px),(pointer:coarse){#vkb-zoom{display:flex}}';
-    document.head.appendChild(zoomCss);
-
-    var addZoomBtns = function() {
-      if (document.getElementById('vkb-zoom')) return;
-      var wrap = document.createElement('div');
-      wrap.id = 'vkb-zoom';
-      var mk = function(label, title, fn) {
-        var btn = document.createElement('button');
-        btn.type = 'button';
-        btn.textContent = label;
-        btn.title = title;
-        var handler = function(ev) { ev.preventDefault(); ev.stopPropagation(); fn(); };
-        btn.addEventListener('touchend', handler, { passive: false });
-        btn.addEventListener('click', handler);
-        return btn;
-      };
-      wrap.appendChild(mk('−', 'Zoom out', function() { zoomBy(1 / 1.5); }));
-      wrap.appendChild(mk('⟲', 'Reset zoom', zoomReset));
-      wrap.appendChild(mk('+', 'Zoom in',  function() { zoomBy(1.5); }));
-      document.body.appendChild(wrap);
-    };
-    if (document.body) addZoomBtns();
-    else document.addEventListener('DOMContentLoaded', addZoomBtns);
+    // No on-screen zoom buttons — pinch to magnify, pinch back / orientation
+    // flip to return to 1×.
   } catch(e) {
     console.warn('[xpra-patches] zoom patch failed:', e.message);
+  }
+
+  // 5. Paste on non-Mac. xpra uses Meta as its clipboard modifier on macOS but
+  //    Control elsewhere, routed through the browser's `paste` event — which is
+  //    unreliable on Windows (Cmd+V works on Mac, Ctrl+V often doesn't). On
+  //    non-Mac we intercept Ctrl+V, read the local clipboard, and type it into
+  //    the remote as key events. The working Mac Cmd+V path is left untouched.
+  try {
+    var isMacP = /Mac|iPhone|iPad|iPod/.test(navigator.platform || navigator.userAgent || '');
+    if (!isMacP) {
+      window.addEventListener('keydown', function(e) {
+        if (!(e.ctrlKey && !e.shiftKey && !e.altKey && (e.key === 'v' || e.key === 'V'))) return;
+        if (!navigator.clipboard || !navigator.clipboard.readText || !kbdSendChar) return;
+        e.preventDefault(); e.stopPropagation();   // block xpra's own (failing) handling
+        navigator.clipboard.readText().then(function(text) {
+          if (!text) return;
+          text = text.replace(/\r\n/g, '\n');
+          for (var i = 0; i < text.length; i++) {
+            var ch = text.charAt(i);
+            if (ch === '\n' || ch === '\r') kbdSendKey('Enter', 'Enter', 13);
+            else if (ch === '\t') kbdSendKey('Tab', 'Tab', 9);
+            else kbdSendChar(ch);
+          }
+        }).catch(function() {});
+      }, true);   // capture: run before xpra's document-level keydown
+    }
+  } catch(e) {
+    console.warn('[xpra-patches] paste patch failed:', e.message);
   }
 })();

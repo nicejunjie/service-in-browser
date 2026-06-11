@@ -13,9 +13,14 @@
     display: flex; gap: 2px; padding: 4px 8px 0;
     background: #1a1a2e; flex-shrink: 0;
     align-items: flex-end;
+    /* Scroll horizontally when the tabs overflow the screen (mobile especially)
+       instead of running off-screen unreachably. */
+    overflow-x: auto; overflow-y: hidden;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
   }
+  .tabs::-webkit-scrollbar { display: none; }
   .tab {
-    position: relative;
+    position: relative; flex-shrink: 0;
     display: flex; align-items: center;
     padding: 10px 30px; cursor: grab; user-select: none;
     min-width: 120px;
@@ -39,7 +44,7 @@
   }
   .tab .close:hover { background: #ff4444; color: #fff; }
   .tab-add {
-    align-self: stretch;
+    align-self: stretch; flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     padding: 0 14px; cursor: pointer; user-select: none;
     font-size: 16px; color: #555; background: transparent;
