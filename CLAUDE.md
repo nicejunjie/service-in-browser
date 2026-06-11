@@ -115,7 +115,7 @@ FileBrowser's icon-only toolbar buttons are enhanced with text labels and an "Op
 
 ### Notes
 
-A persistent scratchpad at `/notes.html`. Auto-saves 800ms after typing, supports Tab and Cmd+S. Content stored at `~/.local/share/desktop-notes.md`, managed via `GET/POST /api/notes` on the manager API. No external service — just a static HTML page + the existing API server.
+A persistent scratchpad at `/notes.html`. Auto-saves 800ms after typing, supports Tab and Cmd+S. Content stored at `~/.local/share/desktop-notes.md`, managed via `GET/POST /api/notes` on the manager API. No external service — just a static HTML page + the existing API server. A **link bar** above the textarea auto-detects every `http(s)` URL in the note (a textarea can't host clickable text) and shows each as a tappable chip; tapping one opens it in the embedded Browser via the parent desktop's `open-in-browser` `postMessage` (direct `/api/browser/open` fallback when standalone). URLs are percent-escaped for the manager's metacharacter filter (`( ) ' " \` $ ;`) so links with parens/semicolons aren't rejected.
 
 ### Upload
 

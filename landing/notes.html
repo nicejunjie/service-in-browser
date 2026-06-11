@@ -22,6 +22,27 @@
     font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   }
   .toolbar .status.saved { color: #4a8; }
+  /* Link bar: tappable chips for every URL detected in the note. Hidden when
+     there are none; horizontally scrollable when there are many. */
+  .links {
+    display: none; align-items: center; gap: 6px; flex-wrap: nowrap;
+    overflow-x: auto; padding: 6px 14px; flex-shrink: 0;
+    background: #12161d; border-bottom: 1px solid #20262f;
+    -webkit-overflow-scrolling: touch; scrollbar-width: none;
+  }
+  .links::-webkit-scrollbar { display: none; }
+  .links.on { display: flex; }
+  .link-chip {
+    flex: 0 0 auto; display: inline-flex; align-items: center; gap: 5px;
+    max-width: 240px; padding: 4px 10px 4px 9px; border-radius: 14px;
+    background: #1a3a6b; color: #cfe0f5; border: 1px solid #2d6cc0;
+    font: 12px system-ui, sans-serif; cursor: pointer; white-space: nowrap;
+    overflow: hidden; text-overflow: ellipsis; user-select: none;
+  }
+  .link-chip:hover { background: #245089; color: #fff; }
+  .link-chip:active { transform: translateY(1px); }
+  .link-chip .ic { font-size: 11px; flex-shrink: 0; }
+  .link-chip .lbl { overflow: hidden; text-overflow: ellipsis; }
   textarea {
     flex: 1; width: 100%; resize: none;
     background: #0e1117; color: #d4d8de;
@@ -38,16 +59,79 @@
     <span class="title">Notes</span>
     <span class="status" id="status"></span>
   </div>
+  <div class="links" id="links"></div>
   <textarea id="editor" placeholder="Type anything here. Auto-saves as you type." spellcheck="false"></textarea>
 <script>
 (function() {
   var editor = document.getElementById('editor');
   var status = document.getElementById('status');
-  var saveTimer = null;
+  var linksEl = document.getElementById('links');
+  var saveTimer = null, scanTimer = null;
 
   fetch('/api/notes').then(function(r) { return r.json(); }).then(function(d) {
     editor.value = d.content || '';
+    scanLinks();
   });
+
+  // --- URL chips: detect every http(s) URL in the note and offer it as a
+  // tappable chip that opens in the embedded Browser. (A textarea can't host
+  // clickable text, so we surface the links in a bar above it instead.) ---
+  var URL_RE = /https?:\/\/[^\s<>"'`]+/gi;
+
+  function openUrl(url) {
+    // The manager rejects shell metacharacters; percent-encode the few that
+    // can legitimately appear in a URL so it isn't rejected (Chromium decodes).
+    var safe = url.replace(/[()'"`$;]/g, function(c) {
+      return '%' + c.charCodeAt(0).toString(16).toUpperCase();
+    });
+    var direct = function() {
+      fetch('/api/browser/open', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url: safe })
+      }).catch(function() {});
+    };
+    // Relay through the parent desktop so the fetch carries the Access cookie
+    // over the tunnel and the Browser app is brought to the front. Direct
+    // fetch is the standalone (/notes.html opened alone) fallback.
+    try {
+      if (window.top && window.top !== window) {
+        window.top.postMessage({ type: 'open-in-browser', url: safe }, '*');
+      } else { direct(); }
+    } catch (e) { direct(); }
+  }
+
+  function labelFor(url) {
+    try {
+      var u = new URL(url);
+      var s = u.hostname.replace(/^www\./, '');
+      if (u.pathname && u.pathname !== '/') s += u.pathname;
+      return s.length > 34 ? s.slice(0, 33) + '…' : s;
+    } catch (e) {
+      return url.length > 34 ? url.slice(0, 33) + '…' : url;
+    }
+  }
+
+  function scanLinks() {
+    var seen = {}, urls = [], m;
+    URL_RE.lastIndex = 0;
+    while ((m = URL_RE.exec(editor.value)) !== null) {
+      // Strip trailing sentence punctuation that's unlikely to be part of the URL.
+      var u = m[0].replace(/[.,;:!?'")\]]+$/, '');
+      if (u && !seen[u]) { seen[u] = 1; urls.push(u); }
+    }
+    linksEl.innerHTML = '';
+    if (!urls.length) { linksEl.classList.remove('on'); return; }
+    urls.forEach(function(u) {
+      var chip = document.createElement('span');
+      chip.className = 'link-chip';
+      chip.title = u;
+      chip.innerHTML = '<span class="ic">🔗</span><span class="lbl"></span>';
+      chip.querySelector('.lbl').textContent = labelFor(u);
+      chip.addEventListener('click', function() { openUrl(u); });
+      linksEl.appendChild(chip);
+    });
+    linksEl.classList.add('on');
+  }
 
   function save() {
     status.textContent = 'saving...';
@@ -70,6 +154,8 @@
     status.textContent = 'editing...';
     status.className = 'status';
     saveTimer = setTimeout(save, 800);
+    clearTimeout(scanTimer);
+    scanTimer = setTimeout(scanLinks, 300);
   });
 
   editor.addEventListener('keydown', function(e) {
