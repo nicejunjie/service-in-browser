@@ -297,8 +297,20 @@
     var SCROLL_TICK = 33;
     var touch = { mode: null, sx: 0, sy: 0, lx: 0, ly: 0, pinch: 0, accum: 0, accumX: 0 };
     // The keyboard button (#vkb-toggle) needs its own touch/click events; if our
-    // window-capture handlers stopPropagation'd them the button would be dead.
-    var onChip = function(e) { return e.target && e.target.closest && e.target.closest('#vkb-toggle'); };
+    // window-capture handlers preventDefault'd them the input could never focus
+    // and the keyboard would never open. Detect button taps by COORDINATES (not
+    // e.target — xpra may pointer-capture the canvas, making e.target wrong).
+    var onChip = function(e) {
+      if (e.target && e.target.closest && e.target.closest('#vkb-toggle')) return true;
+      var el = document.getElementById('vkb-toggle');
+      if (!el) return false;
+      var p = (e.touches && e.touches[0]) || (e.changedTouches && e.changedTouches[0]) || e;
+      if (p.clientX == null) return false;
+      var r = el.getBoundingClientRect();
+      // Pad the hit area so a slightly-off tap still counts as the button.
+      return p.clientX >= r.left - 8 && p.clientX <= r.right + 8 &&
+             p.clientY >= r.top - 8 && p.clientY <= r.bottom + 8;
+    };
 
     var fireWheel = function(x, y, dx, dy) {
       var c = canvasGet(); if (!c) return;
