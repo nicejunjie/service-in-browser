@@ -62,6 +62,8 @@
   }
   .task-app:hover { background: rgba(255,255,255,0.06); color: #c0d0e0; }
   .task-app.active { color: #fff; background: rgba(255,255,255,0.08); }
+  /* drag-to-reorder: the dragged button is dimmed while it's being moved */
+  .task-app.dragging { opacity: 0.4; }
   .task-app .icon { font-size: 17px; line-height: 1; }
   .task-app .close {
     display: inline-flex; align-items: center; justify-content: center;
@@ -288,6 +290,7 @@
       var btn = document.createElement('div');
       btn.className = 'task-app' + (id === active ? ' active' : '');
       btn.dataset.id = id;
+      btn.draggable = true;     // reorder via drag (desktop; ignored on touch)
       btn.innerHTML = '<span class="icon">' + APPS[id].icon + '</span>' +
                       '<span class="name">' + APPS[id].label + '</span>' +
                       '<span class="close" title="Close">&times;</span>';
@@ -399,6 +402,41 @@
     var id = btn.dataset.id;
     if (e.target.closest('.close')) { closeApp(id); return; }
     setActive(id);
+  });
+
+  // --- drag-to-reorder taskbar apps (desktop; HTML5 DnD is a no-op on touch,
+  // so tap/scroll behaviour is unchanged there). We reorder the DOM live during
+  // dragover, then read the final order back into openApps on dragend. ---
+  var dragEl = null;
+  taskAppsEl.addEventListener('dragstart', function(e) {
+    var btn = e.target.closest('.task-app');
+    if (!btn) return;
+    dragEl = btn;
+    btn.classList.add('dragging');
+    e.dataTransfer.effectAllowed = 'move';
+    try { e.dataTransfer.setData('text/plain', btn.dataset.id); } catch (_) {}  // Firefox needs data set
+  });
+  taskAppsEl.addEventListener('dragover', function(e) {
+    if (!dragEl) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    var target = e.target.closest('.task-app');
+    if (!target || target === dragEl) return;
+    var rect = target.getBoundingClientRect();
+    var after = e.clientX > rect.left + rect.width / 2;   // horizontal taskbar
+    taskAppsEl.insertBefore(dragEl, after ? target.nextSibling : target);
+  });
+  taskAppsEl.addEventListener('drop', function(e) { e.preventDefault(); });
+  taskAppsEl.addEventListener('dragend', function() {
+    if (!dragEl) return;
+    dragEl.classList.remove('dragging');
+    dragEl = null;
+    var order = [];
+    taskAppsEl.querySelectorAll('.task-app').forEach(function(el) { order.push(el.dataset.id); });
+    if (order.join(',') !== openApps.join(',')) {   // persist only a real change
+      openApps = order;
+      persist();
+    }
   });
 
   document.addEventListener('click', function(e) {
