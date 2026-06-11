@@ -1,16 +1,17 @@
 /* Experimental dictation patch for Terminal X.
  *
- * Loaded into every /tN/ page (via the sub_filter <script src>), but a NO-OP
- * unless the page was opened with ?kbdexp=1 (only term-x.html does that). On the
- * experimental terminal it takes over xterm's helper textarea: instead of xterm
- * streaming every keystroke/dictation-revision straight to the PTY (which makes
- * iOS dictation pile up), we BUFFER the textarea and forward a debounced
- * value-diff via xterm's coreService.triggerDataEvent — the same diff-on-settle
- * that works in the desktop relay. Printable keys, Enter, Backspace and Tab are
- * handled here; arrows/Ctrl/Esc/function keys fall through to xterm.
+ * Loaded into every /tN/ page (sub_filter <script src>), but a NO-OP unless the
+ * page was opened with ?kbdexp=1 (only term-x.html does that).
  *
- * Tap the "debug" button in term-x.html to toggle an overlay showing the raw
- * input/composition events, for diagnosing what iOS actually fires.
+ * Approach: instead of fighting xterm's own textarea handlers, we lay our OWN
+ * transparent <textarea> over the terminal. Tapping the terminal focuses IT (not
+ * xterm's hidden textarea), so iOS raises the keyboard and dictation buffers into
+ * a real text field natively — exactly like Notes. We forward a debounced
+ * value-diff to the PTY via xterm's coreService.triggerDataEvent. xterm's input
+ * path is never used, so there is nothing to double-send and nothing to pile up.
+ * Vertical drags are passed through as terminal scrollback.
+ *
+ * The "debug" button in term-x.html toggles an overlay of the raw input events.
  */
 (function () {
   if (location.search.indexOf('kbdexp') < 0) return;
@@ -39,15 +40,26 @@
     } catch (_) {}
   }
 
-  function patch(ta) {
-    var lastSent = '', composing = false, timer = null;
+  function init() {
+    var ov = document.createElement('textarea');
+    ov.setAttribute('autocapitalize', 'off');
+    ov.setAttribute('autocomplete', 'off');
+    ov.setAttribute('autocorrect', 'off');
+    ov.setAttribute('spellcheck', 'false');
+    ov.setAttribute('aria-hidden', 'true');
+    // Full-cover, transparent: the terminal shows through; taps land here so the
+    // native keyboard rises and text goes into a real field (dictation-safe).
+    ov.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;z-index:2147482000;' +
+      'background:transparent;color:transparent;caret-color:transparent;border:0;outline:0;' +
+      'resize:none;margin:0;padding:0;font-size:16px;overflow:hidden;-webkit-user-select:text';
+    document.body.appendChild(ov);
 
+    var lastSent = '', composing = false, timer = null;
     function flush() {
       timer = null;
-      var v = ta.value;
+      var v = ov.value;
       dbg(' {in=' + JSON.stringify(v) + ' last=' + JSON.stringify(lastSent) + '}> ');
-      // iOS dictation transiently clears the field to "" between revisions —
-      // ignore it so we stay pure-append and never emit stray deletes.
+      // Ignore iOS dictation's transient clear-to-"" between revisions.
       if (v === '' && lastSent !== '') return;
       var i = 0, min = Math.min(v.length, lastSent.length);
       while (i < min && v.charAt(i) === lastSent.charAt(i)) i++;
@@ -56,30 +68,39 @@
       lastSent = v;
     }
     function sched(ms) { if (timer) clearTimeout(timer); timer = setTimeout(flush, ms); }
-    function clr() { if (timer) { clearTimeout(timer); timer = null; } ta.value = ''; lastSent = ''; }
+    function clr() { if (timer) { clearTimeout(timer); timer = null; } ov.value = ''; lastSent = ''; }
 
-    // Capture-phase + stopImmediatePropagation suppresses xterm's own (bubble)
-    // handlers so it doesn't double-send the text path. Control keys are NOT
-    // blocked, so xterm still handles arrows/Ctrl/Esc/etc.
-    ta.addEventListener('compositionstart', function (e) { dbg(' (cs)'); composing = true; e.stopImmediatePropagation(); }, true);
-    ta.addEventListener('compositionend', function (e) { dbg(' (ce)'); composing = false; e.stopImmediatePropagation(); sched(40); }, true);
-    ta.addEventListener('input', function (e) {
-      dbg(' i[' + JSON.stringify(ta.value) + ' c=' + (e && e.isComposing) + ']');
-      e.stopImmediatePropagation();
+    ov.addEventListener('compositionstart', function () { dbg(' (cs)'); composing = true; });
+    ov.addEventListener('compositionend', function () { dbg(' (ce)'); composing = false; sched(40); });
+    ov.addEventListener('input', function (e) {
+      dbg(' i[' + JSON.stringify(ov.value) + ' c=' + (e && e.isComposing) + ']');
       sched((composing || (e && e.isComposing)) ? 400 : 80);
-    }, true);
-    ta.addEventListener('keydown', function (e) {
-      var k = e.key;
-      if (k === 'Enter') { e.preventDefault(); e.stopImmediatePropagation(); flush(); sendRaw(String.fromCharCode(13)); clr(); dbg(' <ENTER> '); }
-      else if (k === 'Tab') { e.preventDefault(); e.stopImmediatePropagation(); sendRaw(String.fromCharCode(9)); dbg(' <TAB> '); }
-      else if (k === 'Backspace') { e.stopImmediatePropagation(); }  // lets the textarea shrink → input diff sends DEL
-      else if (k && k.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) { e.stopImmediatePropagation(); }  // printable → input diff
-      // everything else (arrows, Ctrl/Alt combos, Esc, F-keys) → xterm
-    }, true);
+    });
+    ov.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') { e.preventDefault(); flush(); sendRaw(String.fromCharCode(13)); clr(); dbg(' <ENTER> '); }
+      else if (e.key === 'Tab') { e.preventDefault(); sendRaw(String.fromCharCode(9)); dbg(' <TAB> '); }
+      else if (e.key === 'Backspace' && ov.value === '') { e.preventDefault(); sendRaw(String.fromCharCode(127)); }
+    });
+
+    // Vertical drag → terminal scrollback (so the cover doesn't kill scrolling).
+    var sy = 0, acc = 0, moved = false;
+    ov.addEventListener('touchstart', function (e) { sy = e.touches[0].clientY; acc = 0; moved = false; }, { passive: true });
+    ov.addEventListener('touchmove', function (e) {
+      var y = e.touches[0].clientY, dy = y - sy; sy = y;
+      if (Math.abs(dy) > 1) moved = true;
+      acc += dy;
+      var t = window.term;
+      if (t && t.scrollLines) {
+        while (acc > 18) { t.scrollLines(-1); acc -= 18; }
+        while (acc < -18) { t.scrollLines(1); acc += 18; }
+      }
+      if (moved) e.preventDefault();   // don't let the textarea scroll itself
+    }, { passive: false });
+
+    dbg(' [overlay ready] ');
   }
 
   var iv = setInterval(function () {
-    var ta = document.querySelector('.xterm-helper-textarea');
-    if (ta && window.term) { clearInterval(iv); patch(ta); }
+    if (window.term && document.body) { clearInterval(iv); init(); }
   }, 100);
 })();
