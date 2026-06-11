@@ -47,11 +47,14 @@
     ov.setAttribute('autocorrect', 'off');
     ov.setAttribute('spellcheck', 'false');
     ov.setAttribute('aria-hidden', 'true');
-    // Full-cover, transparent: the terminal shows through; taps land here so the
-    // native keyboard rises and text goes into a real field (dictation-safe).
-    ov.style.cssText = 'position:fixed;left:0;top:0;width:100%;height:100%;z-index:2147482000;' +
-      'background:transparent;color:transparent;caret-color:transparent;border:0;outline:0;' +
-      'resize:none;margin:0;padding:0;font-size:16px;overflow:hidden;-webkit-user-select:text';
+    // A transparent BOTTOM strip (not full-cover) so tapping it focuses a real
+    // input at the prompt zone. position:absolute (not fixed) + the caret pushed
+    // to the bottom (big padding-top) means iOS scrolls the whole page up to
+    // clear the keyboard — exactly like production, where xterm's textarea sits
+    // at the cursor. Tap the lower part of the terminal to type/dictate.
+    ov.style.cssText = 'position:absolute;left:0;right:0;bottom:0;height:8em;box-sizing:border-box;' +
+      'z-index:2147482000;background:transparent;color:transparent;caret-color:transparent;' +
+      'border:0;outline:0;resize:none;margin:0;padding:6.6em 6px 0;font-size:16px;overflow:hidden;-webkit-user-select:text';
     document.body.appendChild(ov);
 
     var lastSent = '', composing = false, timer = null;
@@ -81,26 +84,6 @@
       else if (e.key === 'Tab') { e.preventDefault(); sendRaw(String.fromCharCode(9)); dbg(' <TAB> '); }
       else if (e.key === 'Backspace' && ov.value === '') { e.preventDefault(); sendRaw(String.fromCharCode(127)); }
     });
-
-    // Keep the terminal fitted ABOVE the on-screen keyboard: size the page to
-    // the visual viewport so xterm re-fits to the visible rows and the prompt
-    // stays visible (instead of hiding behind the keyboard). visualViewport
-    // shrinks when the keyboard appears.
-    function fitVV() {
-      var vv = window.visualViewport; if (!vv) return;
-      var h = Math.round(vv.height);
-      document.documentElement.style.height = h + 'px';
-      document.body.style.height = h + 'px';
-      document.body.style.overflow = 'hidden';
-      ov.style.height = h + 'px';
-      try { window.dispatchEvent(new Event('resize')); } catch (e) {}  // nudge xterm fit-addon
-      dbg(' [vv h=' + h + '] ');
-    }
-    if (window.visualViewport) {
-      window.visualViewport.addEventListener('resize', fitVV);
-      window.visualViewport.addEventListener('scroll', fitVV);
-      fitVV();
-    }
 
     // Vertical drag → terminal scrollback (so the cover doesn't kill scrolling).
     var sy = 0, acc = 0, moved = false;
