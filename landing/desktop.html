@@ -238,7 +238,7 @@
     <div class="sm-item" data-id="upload"><div class="sm-icon">⬆</div><div><div class="sm-name">Upload</div><div class="sm-desc">Quick file upload to ~/Uploads</div></div></div>
     <div class="sm-title sm-title-system">System</div>
     <div class="sm-item" data-id="update"><div class="sm-icon">⬇</div><div><div class="sm-name">Update</div><div class="sm-desc">Pull latest from GitHub &amp; redeploy</div></div></div>
-    <div class="sm-build">build kbd-6</div>
+    <div class="sm-build">build kbd-7</div>
   </div>
 
   <div class="taskbar" id="taskbar">
@@ -303,7 +303,26 @@
     var ico = document.getElementById('kbd-ico');
     if (!relay || !btn) return;
     var lastVal = '', composing = false, flushTimer = null;
+
+    // --- Debug overlay: tap the Start-menu build tag to toggle. Shows the raw
+    // input values iOS fires and what we forward, so we can see ground truth. ---
+    var dbgEl = null, dbgBuf = [];
+    function dbg(s) {
+      if (!dbgEl) return;
+      dbgBuf.push(s); if (dbgBuf.length > 80) dbgBuf.shift();
+      dbgEl.textContent = dbgBuf.join(''); dbgEl.scrollTop = dbgEl.scrollHeight;
+    }
+    window.__kbdDbg = function() {
+      if (dbgEl) { dbgEl.remove(); dbgEl = null; return; }
+      dbgEl = document.createElement('div');
+      dbgEl.style.cssText = 'position:fixed;top:0;left:0;right:0;max-height:32vh;overflow:auto;z-index:2147483647;background:rgba(0,0,0,.88);color:#6f6;font:11px ui-monospace,monospace;padding:6px;white-space:pre-wrap;word-break:break-all';
+      document.body.appendChild(dbgEl); dbg('[kbd debug on]\n');
+    };
+    var bt = document.querySelector('.sm-build');
+    if (bt) bt.addEventListener('click', function(e) { e.stopPropagation(); window.__kbdDbg(); });
+
     function postKbd(msg) {
+      dbg(msg.ch !== undefined ? msg.ch : '<' + msg.key + '>');
       var f = document.getElementById('frame-browser');
       if (f && f.contentWindow) { try { f.contentWindow.postMessage(msg, '*'); } catch (e) {} }
     }
@@ -314,6 +333,7 @@
     function flush() {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
       var v = relay.value;
+      dbg('\n{in=' + JSON.stringify(v) + ' last=' + JSON.stringify(lastVal) + '}>');
       // iOS dictation transiently CLEARS the field to "" between revisions
       // before re-setting the next one. Ignore that empty state — otherwise we
       // emit backspaces (which don't reliably apply on the remote) and then
@@ -356,11 +376,12 @@
       else if (e.key === 'Tab')     { e.preventDefault(); postKbd({ type: 'kbd-key', key: 'Tab' }); }
       else if (e.key === 'Backspace' && relay.value === '') { e.preventDefault(); postKbd({ type: 'kbd-key', key: 'Backspace' }); }
     });
-    // Tap the button while the keyboard is up → intentional dismiss: flush any
-    // pending text, then reset the baseline so the next field starts clean.
-    // (First tap focuses normally — that's what raises the keyboard.)
+    // Tap the button while the keyboard is up → dismiss. Just blur (which
+    // flushes); do NOT reset the baseline here — a stray pointer event during
+    // dictation could otherwise wipe lastVal mid-utterance and cause a pile-up.
+    // The baseline only ever resets on Enter now.
     relay.addEventListener('pointerdown', function(e) {
-      if (document.activeElement === relay) { e.preventDefault(); flush(); reset(); relay.blur(); }
+      if (document.activeElement === relay) { e.preventDefault(); relay.blur(); }
     });
   })();
   function updateKbdBtn() {
