@@ -111,24 +111,23 @@
     var css = document.createElement('style');
     css.textContent =
       '.simple-keyboard{display:none!important}' +     // never show xpra's drawn keyboard
-      // Hidden but focusable input. font-size:16px stops iOS zooming on focus;
-      // kept invisible (opacity/transparent) rather than display:none, which
-      // would block focus() from raising the keyboard.
-      '#xpra-kbd{position:fixed;bottom:0;left:0;width:1px;height:1px;opacity:0;' +
-        'border:0;padding:0;margin:0;font-size:16px;z-index:-1;' +
-        'color:transparent;background:transparent;caret-color:transparent}' +
-      // Right-edge, vertically centered — clear of the taskbar and the home
-      // indicator, and still visible (above the keyboard) when it's open so it
-      // can dismiss. Fixed position, no dynamic repositioning (visualViewport
-      // is unreliable inside an iframe).
-      '#vkb-toggle{position:fixed;right:8px;top:42%;' +
-        'z-index:2147483647;min-width:48px;height:48px;padding:0 14px;border-radius:24px;' +
-        'background:#2d6cc0;color:#fff;border:1px solid #2d6cc0;box-shadow:0 4px 14px rgba(0,0,0,.5);' +
-        'font:600 18px/48px system-ui,sans-serif;text-align:center;cursor:pointer;' +
-        '-webkit-user-select:none;user-select:none;display:none;' +
-        'touch-action:manipulation;white-space:nowrap}' +
-      '#vkb-toggle.open{background:#d23a2a;border-color:#d23a2a;padding:0 18px;font-size:15px}' +
-      '@media (max-width:900px),(pointer:coarse){#vkb-toggle{display:inline-block}}';
+      // The button IS the input: iOS only raises the keyboard when the user taps
+      // a real text field directly (programmatic focus of a separate hidden
+      // input does NOT work). So #xpra-kbd is a real <input> styled as the round
+      // ⌨ button on the right edge; tapping it focuses it → keyboard. Its text
+      // is transparent (font-size:16px avoids iOS focus-zoom); the ⌨/✕ glyph is
+      // a sibling overlay with pointer-events:none so taps land on the input.
+      '#vkb-toggle{position:fixed;right:8px;top:42%;z-index:2147483647;' +
+        'width:48px;height:48px;border-radius:24px;display:none;' +
+        'background:#2d6cc0;border:1px solid #2d6cc0;box-shadow:0 4px 14px rgba(0,0,0,.5);' +
+        'touch-action:manipulation;-webkit-user-select:none;user-select:none}' +
+      '#vkb-toggle.open{background:#d23a2a;border-color:#d23a2a}' +
+      '#xpra-kbd{position:absolute;inset:0;width:100%;height:100%;margin:0;padding:0;' +
+        'border:0;outline:none;background:transparent;color:transparent;caret-color:transparent;' +
+        'font-size:16px;text-align:center;cursor:pointer;z-index:1}' +
+      '#vkb-ico{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;' +
+        'pointer-events:none;font:600 20px system-ui,sans-serif;color:#fff}' +
+      '@media (max-width:900px),(pointer:coarse){#vkb-toggle{display:block}}';
     document.head.appendChild(css);
 
     var kbdInput = null, kbdChip = null, lastVal = '', kbdOpen = false;
@@ -179,13 +178,19 @@
 
     var setOpen = function(open) {
       kbdOpen = open;
-      if (!kbdChip) return;
-      kbdChip.classList.toggle('open', open);
-      kbdChip.textContent = open ? '✕  Hide keyboard' : '⌨';
+      if (kbdChip) kbdChip.classList.toggle('open', open);
+      var ico = document.getElementById('vkb-ico');
+      if (ico) ico.textContent = open ? '✕' : '⌨';
     };
 
     var build = function() {
-      if (document.getElementById('xpra-kbd')) return;
+      if (document.getElementById('vkb-toggle')) return;
+      // The wrapper is the round button; the <input> fills it and is the actual
+      // tap target (so the tap lands ON a real input → iOS opens the keyboard).
+      kbdChip = document.createElement('div');
+      kbdChip.id = 'vkb-toggle';
+      kbdChip.title = 'Keyboard';
+
       kbdInput = document.createElement('input');
       kbdInput.id = 'xpra-kbd';
       kbdInput.type = 'text';
@@ -197,26 +202,19 @@
       kbdInput.addEventListener('keydown', onKeydown);
       kbdInput.addEventListener('focus', function() { resetBuf(); setOpen(true); });
       kbdInput.addEventListener('blur', function() { setOpen(false); });
-      document.body.appendChild(kbdInput);
-
-      // The ⌨ button is the reliable keyboard trigger: it has its own clean
-      // touch/click handlers (the window touch layer in patch 4 ignores taps on
-      // #vkb-toggle), so focus() runs inside a genuine user gesture on a real
-      // element — which is what iOS requires to raise the keyboard.
-      kbdChip = document.createElement('div');
-      kbdChip.id = 'vkb-toggle';
-      kbdChip.title = 'Keyboard';
-      // CLICK only (not touchend): preventDefault on a touchend cancels the
-      // synthesized click that iOS needs to raise the keyboard, so the button
-      // appeared dead. `touch-action:manipulation` already removes the click
-      // delay. We don't preventDefault — focus() must run in a clean click
-      // gesture for iOS to open the keyboard.
-      kbdChip.addEventListener('click', function(ev) {
-        ev.stopPropagation();
-        if (kbdOpen) { try { kbdInput.blur(); } catch (e) {} }
-        else { resetBuf(); try { kbdInput.focus(); } catch (e) {} }
+      // Tapping the button while the keyboard is already up dismisses it; the
+      // first tap (input not yet focused) is left alone so the default focus —
+      // which is what actually raises the keyboard — proceeds untouched.
+      kbdInput.addEventListener('pointerdown', function(e) {
+        if (document.activeElement === kbdInput) { e.preventDefault(); kbdInput.blur(); }
       });
-      setOpen(false);
+
+      var ico = document.createElement('span');
+      ico.id = 'vkb-ico';
+      ico.textContent = '⌨';
+
+      kbdChip.appendChild(kbdInput);
+      kbdChip.appendChild(ico);
       document.body.appendChild(kbdChip);
     };
     kbdSendChar = sendChar; kbdSendKey = sendKey;   // for the paste patch (5)
