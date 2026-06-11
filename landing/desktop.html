@@ -298,7 +298,7 @@
     var btn = document.getElementById('kbd-btn');
     var ico = document.getElementById('kbd-ico');
     if (!relay || !btn) return;
-    var lastVal = '', composing = false, flushTimer = null;
+    var lastVal = '', composing = false, flushTimer = null, blurClearTimer = null;
     function postKbd(msg) {
       var f = document.getElementById('frame-browser');
       if (f && f.contentWindow) { try { f.contentWindow.postMessage(msg, '*'); } catch (e) {} }
@@ -316,8 +316,21 @@
       lastVal = v;
     }
     function reset() { if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; } relay.value = ''; lastVal = ''; }
-    relay.addEventListener('focus', function() { reset(); btn.classList.add('open'); ico.textContent = '✕'; });
-    relay.addEventListener('blur',  function() { flush(); btn.classList.remove('open'); ico.textContent = '⌨'; });
+    relay.addEventListener('focus', function() {
+      // A refocus cancels a pending buffer-clear: iOS dictation churns
+      // focus/blur, and clearing lastVal then made each revision re-forward in
+      // full (the pile-up). Keep the buffer across a quick blur→focus.
+      if (blurClearTimer) { clearTimeout(blurClearTimer); blurClearTimer = null; }
+      btn.classList.add('open'); ico.textContent = '✕';
+    });
+    relay.addEventListener('blur', function() {
+      flush();
+      btn.classList.remove('open'); ico.textContent = '⌨';
+      // Clear the buffer only if the blur sticks (a real dismiss) — not the
+      // transient blur dictation fires, which a focus would cancel above.
+      if (blurClearTimer) clearTimeout(blurClearTimer);
+      blurClearTimer = setTimeout(function() { blurClearTimer = null; relay.value = ''; lastVal = ''; }, 700);
+    });
     // Dictation/IME compose text in revisions (each firing `input`); forwarding
     // every revision pile-stacked them on the remote. Hold off while composing
     // and forward ONE diff when it settles (compositionend, or a pause as a
