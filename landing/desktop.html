@@ -238,7 +238,7 @@
     <div class="sm-item" data-id="upload"><div class="sm-icon">⬆</div><div><div class="sm-name">Upload</div><div class="sm-desc">Quick file upload to ~/Uploads</div></div></div>
     <div class="sm-title sm-title-system">System</div>
     <div class="sm-item" data-id="update"><div class="sm-icon">⬇</div><div><div class="sm-name">Update</div><div class="sm-desc">Pull latest from GitHub &amp; redeploy</div></div></div>
-    <div class="sm-build">build kbd-4</div>
+    <div class="sm-build">build kbd-5</div>
   </div>
 
   <div class="taskbar" id="taskbar">
@@ -327,19 +327,20 @@
     // the diff always forwards the correct delta, so dictation can't pile up.
     relay.addEventListener('focus', function() { btn.classList.add('open'); ico.textContent = '✕'; });
     relay.addEventListener('blur',  function() { flush(); btn.classList.remove('open'); ico.textContent = '⌨'; });
-    // Dictation/IME compose text in revisions (each firing `input`); forwarding
-    // every revision pile-stacked them on the remote. Hold off while composing
-    // and forward ONE diff when it settles (compositionend, or a pause as a
-    // fallback in case compositionend never fires).
+    // ALWAYS debounce. iOS dictation CLEARS then RE-SETS the value between
+    // revisions ("" → "hell"), each firing `input`. Flushing every event read
+    // the intermediate "" and emitted backspaces that then re-typed the whole
+    // word on top — the pile-up (the tell-tale "hh…"). Debouncing means we only
+    // ever read the SETTLED value of each revision, so every forward is a clean
+    // append/delta with no spurious backspaces. A longer delay while composing.
+    function scheduleFlush(ms) {
+      if (flushTimer) clearTimeout(flushTimer);
+      flushTimer = setTimeout(function() { flushTimer = null; flush(); }, ms);
+    }
     relay.addEventListener('compositionstart', function() { composing = true; });
-    relay.addEventListener('compositionend', function() { composing = false; flush(); });
+    relay.addEventListener('compositionend', function() { composing = false; scheduleFlush(60); });
     relay.addEventListener('input', function(e) {
-      if (composing || (e && e.isComposing)) {
-        if (flushTimer) clearTimeout(flushTimer);
-        flushTimer = setTimeout(function() { flushTimer = null; flush(); }, 600);
-        return;
-      }
-      flush();
+      scheduleFlush((composing || (e && e.isComposing)) ? 450 : 80);
     });
     relay.addEventListener('keydown', function(e) {
       if (e.key === 'Enter')        { e.preventDefault(); flush(); postKbd({ type: 'kbd-key', key: 'Enter' }); reset(); }
@@ -669,8 +670,16 @@
 })();
 
 // PWA service worker — caches the shell for instant cold loads. Registered
-// separately so a failure here can never affect the desktop above.
+// separately so a failure here can never affect the desktop above. When an
+// updated SW takes control (e.g. after a shell change), reload once so the
+// fresh shell loads immediately instead of needing a second relaunch.
 if ('serviceWorker' in navigator) {
+  var swRefreshing = false;
+  navigator.serviceWorker.addEventListener('controllerchange', function() {
+    if (swRefreshing) return;
+    swRefreshing = true;
+    window.location.reload();
+  });
   window.addEventListener('load', function() {
     navigator.serviceWorker.register('/sw.js').catch(function() {});
   });
