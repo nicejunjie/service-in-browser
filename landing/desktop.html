@@ -238,7 +238,7 @@
     <div class="sm-item" data-id="upload"><div class="sm-icon">⬆</div><div><div class="sm-name">Upload</div><div class="sm-desc">Quick file upload to ~/Uploads</div></div></div>
     <div class="sm-title sm-title-system">System</div>
     <div class="sm-item" data-id="update"><div class="sm-icon">⬇</div><div><div class="sm-name">Update</div><div class="sm-desc">Pull latest from GitHub &amp; redeploy</div></div></div>
-    <div class="sm-build">build kbd-5</div>
+    <div class="sm-build">build kbd-6</div>
   </div>
 
   <div class="taskbar" id="taskbar">
@@ -313,7 +313,16 @@
     // iOS dictation revising earlier words) — not just appends.
     function flush() {
       if (flushTimer) { clearTimeout(flushTimer); flushTimer = null; }
-      var v = relay.value, i = 0, min = Math.min(v.length, lastVal.length);
+      var v = relay.value;
+      // iOS dictation transiently CLEARS the field to "" between revisions
+      // before re-setting the next one. Ignore that empty state — otherwise we
+      // emit backspaces (which don't reliably apply on the remote) and then
+      // re-type the whole word on top: the pile-up. Since the transcription
+      // grows by prefix-extension, keeping lastVal and skipping "" makes every
+      // forward a clean append, needing no backspaces at all. (Explicit
+      // deletes still work via the empty-buffer Backspace keydown handler.)
+      if (v === '' && lastVal !== '') return;
+      var i = 0, min = Math.min(v.length, lastVal.length);
       while (i < min && v.charAt(i) === lastVal.charAt(i)) i++;
       for (var d = lastVal.length - i; d > 0; d--) postKbd({ type: 'kbd-key', key: 'Backspace' });
       for (var j = i; j < v.length; j++) postKbd({ type: 'kbd-char', ch: v.charAt(j) });
