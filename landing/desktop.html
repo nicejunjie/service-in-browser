@@ -89,6 +89,7 @@
   .task-app.active[data-id="monitor"]  { border-bottom-color: #d2902a; }
   .task-app.active[data-id="upload"]   { border-bottom-color: #3ab36a; }
   .task-app.active[data-id="update"]   { border-bottom-color: #8a8a9a; }
+  .task-app.active[data-id="terminalx"]{ border-bottom-color: #33aa55; }
 
   .tb-spacer { flex: 1; }
 
@@ -161,6 +162,7 @@
   .sm-item[data-id="monitor"]  .sm-icon { background: #4a3010; }
   .sm-item[data-id="upload"]   .sm-icon { background: #0f5c2e; }
   .sm-item[data-id="update"]   .sm-icon { background: #3a3a4a; }
+  .sm-item[data-id="terminalx"].sm-icon { background: #1a5c2a; }
   /* "System" subheading sits apart from the everyday apps above it */
   .sm-title-system { margin-top: 6px; border-top: 1px solid #222a36; padding-top: 12px; }
   /* Build tag — lets you confirm whether a fresh shell loaded (vs a stale
@@ -238,7 +240,8 @@
     <div class="sm-item" data-id="upload"><div class="sm-icon">⬆</div><div><div class="sm-name">Upload</div><div class="sm-desc">Quick file upload to ~/Uploads</div></div></div>
     <div class="sm-title sm-title-system">System</div>
     <div class="sm-item" data-id="update"><div class="sm-icon">⬇</div><div><div class="sm-name">Update</div><div class="sm-desc">Pull latest from GitHub &amp; redeploy</div></div></div>
-    <div class="sm-build">build kbd-11</div>
+    <div class="sm-item" data-id="terminalx"><div class="sm-icon">⬛</div><div><div class="sm-name">Terminal X</div><div class="sm-desc">Experimental — tap-to-type dictation fix</div></div></div>
+    <div class="sm-build">build kbd-12</div>
   </div>
 
   <div class="taskbar" id="taskbar">
@@ -281,7 +284,8 @@
     notes:    { label: 'Notes',    icon: '📝', src: '/notes.html' },
     monitor:  { label: 'Monitor',  icon: '📊', src: '/monitor.html' },
     upload:   { label: 'Upload',   icon: '⬆',  src: '/upload.html' },
-    update:   { label: 'Update',   icon: '⬇',  src: '/update.html' }
+    update:   { label: 'Update',   icon: '⬇',  src: '/update.html' },
+    terminalx:{ label: 'Terminal X', icon: '⬛', src: '/term-x.html' }
   };
 
   var framesEl  = document.getElementById('frames');
