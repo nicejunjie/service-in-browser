@@ -121,7 +121,6 @@ def _chown_app(path):
     """Set ownership of `path` to APP_USER if running as root (the manager
     typically does). Best-effort — silently ignored on failure."""
     try:
-        import pwd
         if os.geteuid() != 0:
             return
         pw = pwd.getpwnam(APP_USER)

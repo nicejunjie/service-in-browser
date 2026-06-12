@@ -185,11 +185,10 @@
     //
     // We take over all touch events on the screen entirely:
     //   - 2 fingers → pinch magnifies the view (CSS transform, no remote zoom)
-    //   - 2-finger tap (no pinch) → dismiss the native keyboard
     //   - 1 finger drag, zoomed in → pan the magnified view
     //   - 1 finger drag, at 1x → wheel events sent to remote (scroll the page)
-    //   - 1 finger, no movement → click at the touch point AND raise the native
-    //     keyboard (like the terminal — there's no on-screen keyboard button)
+    //   - 1 finger, no movement → click at the touch point (the native keyboard
+    //     is raised separately by the desktop shell's ⌨ button)
     //
     // xpra's wheel and mouse handlers on #screen forward synthetic events to
     // the remote just fine (its forwarders don't check event.isTrusted).
@@ -211,7 +210,6 @@
     // Higher value = slower scroll relative to finger.
     var SCROLL_TICK = 33;
     var touch = { mode: null, sx: 0, sy: 0, lx: 0, ly: 0, pinch: 0, accum: 0, accumX: 0 };
-    // The keyboard button (#vkb-toggle) needs its own touch/click events; if our
     var fireWheel = function(x, y, dx, dy) {
       var c = canvasGet(); if (!c) return;
       c.dispatchEvent(new WheelEvent('wheel', {

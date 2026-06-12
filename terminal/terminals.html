@@ -315,14 +315,6 @@
     if (e.data.type === 'focus-terminal' && active) {
       focusTerminal(active);
     }
-    // Relay keystrokes from the desktop's implicit keyboard down to the active
-    // /tN/ iframe, which turns them into raw PTY input (see terminal/install.sh).
-    if ((e.data.type === 'kbd-char' || e.data.type === 'kbd-key') && active) {
-      var f = document.getElementById('frame-' + active);
-      if (f && f.contentWindow) {
-        try { f.contentWindow.postMessage(e.data, '*'); } catch (err) {}
-      }
-    }
   });
 
   // When the desktop shell switches into Terminal after the app was hidden,

@@ -293,17 +293,15 @@
   var openApps = [];   // ids, in taskbar order
   var active   = null;
 
-  // --- Implicit keyboard relay -----------------------------------------------
-  // Browser (xpra canvas) and Terminal (xterm) take keyboard input but have no
-  // DOM field of their own, and live-typing into the terminal's own textarea
-  // breaks under iOS dictation. So a HIDDEN <input> in the top page captures all
-  // input and forwards it LIVE to whichever app is active — no visible box, no
-  // Send; you just type/dictate and it appears in the app. iOS only raises the
-  // keyboard when you tap a real input, so the input is styled as a small ⌨
-  // button you tap to start (the only visible UI). Forwarding is a debounced
-  // value-diff that ignores iOS dictation's transient empty-clear, so it can't
-  // pile up. Browser interprets kbd-char/kbd-key via xpra; Terminal turns them
-  // into raw PTY input (relayed via terminals.html → the active /tN/).
+  // --- Browser keyboard relay ------------------------------------------------
+  // The Browser (xpra canvas) takes keyboard input but has no DOM field of its
+  // own. So a HIDDEN <input> in the top page captures input and forwards it LIVE
+  // to the Browser iframe — no visible box, no Send; you type/dictate and it
+  // appears. iOS only raises the keyboard when you tap a real input, so the
+  // input is styled as a small ⌨ button you tap to start (the only visible UI).
+  // Forwarding is a debounced value-diff that ignores iOS dictation's transient
+  // empty-clear; xpra-patches.js interprets the kbd-char/kbd-key messages.
+  // (The Terminal has its own in-page overlay — terminal/terminal-kbd.js.)
   var IS_TOUCH = !!(window.matchMedia && window.matchMedia('(pointer: coarse)').matches);
   (function setupKbd() {
     var btn = document.getElementById('kbd-btn');
