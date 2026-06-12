@@ -71,6 +71,17 @@ write_root() {
         sudo tee "$dest" >/dev/null
     fi
 }
+# Write an nginx conf from stdin only if it actually differs, and flag a single
+# reload at the end. Skipping no-op writes means a re-run/self-update that
+# doesn't change the config won't reload nginx — which would otherwise sever
+# every live terminal/Browser WebSocket and force a reconnect storm.
+NGINX_DIRTY=0
+nginx_write() {
+    local dest="$1" tmp; tmp="$(mktemp)"; cat >"$tmp"
+    if [ -f "$dest" ] && cmp -s "$tmp" "$dest"; then rm -f "$tmp"; return 0; fi
+    if (( DRY_RUN )); then echo "+ nginx: would update $dest"; else sudo install -m 0644 "$tmp" "$dest"; fi
+    rm -f "$tmp"; NGINX_DIRTY=1
+}
 
 cat <<EOF
 claude-web install
@@ -124,7 +135,7 @@ if (( INSTALL_NGINX )); then
         echo "   connection_upgrade map already defined elsewhere — skipping"
     else
         cat "$APP_DIR/nginx/claude-web-upgrade.conf" \
-            | write_root "/etc/nginx/conf.d/claude-web-upgrade.conf"
+            | nginx_write "/etc/nginx/conf.d/claude-web-upgrade.conf"
     fi
 
     # 4b. Build port map for terminal routing
@@ -215,7 +226,7 @@ server {
 }
 "
     run sudo install -d -m 0755 /etc/nginx/snippets/claude-extras.d
-    echo "$site_config" | write_root "/etc/nginx/sites-available/$NGINX_SITE_NAME"
+    echo "$site_config" | nginx_write "/etc/nginx/sites-available/$NGINX_SITE_NAME"
 
     # 4c. Disable any other default_server site that would clash
     if [ -L "/etc/nginx/sites-enabled/default" ] \
@@ -223,6 +234,12 @@ server {
              != "$(readlink -f /etc/nginx/sites-available/$NGINX_SITE_NAME 2>/dev/null || true)" ]; then
         echo "   disabling /etc/nginx/sites-enabled/default (was: $(readlink /etc/nginx/sites-enabled/default))"
         run sudo rm -f /etc/nginx/sites-enabled/default
+        NGINX_DIRTY=1
+    fi
+    # Enable our site (idempotent); a (re)created symlink needs a reload too.
+    if [ "$(readlink -f /etc/nginx/sites-enabled/$NGINX_SITE_NAME 2>/dev/null || true)" \
+         != "$(readlink -f /etc/nginx/sites-available/$NGINX_SITE_NAME 2>/dev/null || true)" ]; then
+        NGINX_DIRTY=1
     fi
     run sudo ln -sfn "/etc/nginx/sites-available/$NGINX_SITE_NAME" \
                      "/etc/nginx/sites-enabled/$NGINX_SITE_NAME"
@@ -256,8 +273,11 @@ server {
             "$APP_DIR/terminal-kbd.js" "$LANDING_DIR/terminal-kbd.js"
     fi
 
-    run sudo nginx -t
-    run sudo systemctl reload nginx
+    if (( NGINX_DIRTY )); then
+        run sudo nginx -t && run sudo systemctl reload nginx
+    else
+        echo "   nginx config unchanged — skipping reload"
+    fi
 fi
 
 # 5. Landing page ------------------------------------------------------------

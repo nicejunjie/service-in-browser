@@ -58,6 +58,15 @@ write_root() {
     else sudo tee "$dest" >/dev/null
     fi
 }
+# Write an nginx conf from stdin only if it differs; flag a single reload so a
+# no-op deploy doesn't reload nginx (which severs live terminal/Browser sockets).
+NGINX_DIRTY=0
+nginx_write() {
+    local dest="$1" tmp; tmp="$(mktemp)"; cat >"$tmp"
+    if [ -f "$dest" ] && cmp -s "$tmp" "$dest"; then rm -f "$tmp"; return 0; fi
+    if (( DRY_RUN )); then echo "+ nginx: would update $dest"; else sudo install -m 0644 "$tmp" "$dest"; fi
+    rm -f "$tmp"; NGINX_DIRTY=1
+}
 
 # Auto-install Chromium (snap) when nothing is present and we're allowed to —
 # the manager's /api/browser/open expects the snap-confined xpra-profile path,
@@ -202,9 +211,12 @@ if (( INSTALL_NGINX )); then
     run sudo install -m 0644 "$APP_DIR/xpra-patches.js" "$LANDING_DIR/xpra-patches.js"
     sed -e "s|@XPRA_PORT@|$XPRA_PORT|g" \
         "$APP_DIR/nginx/browser.conf" \
-        | write_root /etc/nginx/snippets/claude-extras.d/browser.conf
-    run sudo nginx -t
-    run sudo systemctl reload nginx
+        | nginx_write /etc/nginx/snippets/claude-extras.d/browser.conf
+    if (( NGINX_DIRTY )); then
+        run sudo nginx -t && run sudo systemctl reload nginx
+    else
+        echo "   nginx unchanged — skipping reload"
+    fi
 fi
 
 # 7. Enable & start ----------------------------------------------------------

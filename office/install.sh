@@ -37,6 +37,16 @@ done
 
 run() { if (( DRY_RUN )); then printf '+ %s\n' "$*"; else "$@"; fi; }
 write_root() { if (( DRY_RUN )); then echo "+ write -> $1"; sed 's/^/    | /'; else sudo tee "$1" >/dev/null; fi; }
+# Write an nginx conf from stdin only if it actually differs, and flag a single
+# reload. Skipping no-op writes avoids reloading nginx (which severs live
+# terminal/Browser/Office WebSockets) when nothing changed.
+NGINX_DIRTY=0
+nginx_write() {
+    local dest="$1" tmp; tmp="$(mktemp)"; cat >"$tmp"
+    if [ -f "$dest" ] && cmp -s "$tmp" "$dest"; then rm -f "$tmp"; return 0; fi
+    if (( DRY_RUN )); then echo "+ nginx: would update $dest"; else sudo install -m 0644 "$tmp" "$dest"; fi
+    rm -f "$tmp"; NGINX_DIRTY=1
+}
 
 if ! command -v docker >/dev/null 2>&1; then
     echo "docker is required but not installed. Install Docker, then re-run." >&2
@@ -82,9 +92,12 @@ if (( INSTALL_NGINX )); then
     echo "== installing nginx snippet =="
     sed -e "s|@ONLYOFFICE_PORT@|$ONLYOFFICE_PORT|g" \
         "$APP_DIR/nginx/onlyoffice.conf" \
-        | write_root /etc/nginx/snippets/claude-extras.d/onlyoffice.conf
-    run sudo nginx -t
-    run sudo systemctl reload nginx
+        | nginx_write /etc/nginx/snippets/claude-extras.d/onlyoffice.conf
+    if (( NGINX_DIRTY )); then
+        run sudo nginx -t && run sudo systemctl reload nginx
+    else
+        echo "   nginx unchanged — skipping reload"
+    fi
 fi
 
 echo
