@@ -132,6 +132,12 @@ ONLYOFFICE_HOST = os.environ.get("ONLYOFFICE_CALLBACK_HOST", "http://host.docker
 # Extension -> OnlyOffice documentType.
 _OO_CELL = {"xlsx", "xls", "xlsm", "xlsb", "xltx", "xltm", "ods", "ots", "csv", "tsv"}
 _OO_SLIDE = {"pptx", "ppt", "pptm", "ppsx", "ppsm", "potx", "potm", "odp", "otp"}
+# "New document" — blank templates (bundled in the repo) stamped into ~/Documents
+# when the Office app is opened with no file. documentType -> (ext, label).
+OFFICE_NEW_DIR = os.path.join(OFFICE_HOME, "Documents")
+OFFICE_NEW = {"word": ("docx", "Document"),
+              "cell": ("xlsx", "Spreadsheet"),
+              "slide": ("pptx", "Presentation")}
 # Active editing sessions: rel-path -> document key. The key must stay stable
 # for the whole session (it identifies the doc to the server, incl. forcesave),
 # so we mint it at open and reuse it until the session closes — NOT re-derive
@@ -990,6 +996,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_office_callback()
         if self.path == "/api/office/forcesave":
             return self._handle_office_forcesave()
+        if self.path == "/api/office/new":
+            return self._handle_office_new()
         if self.path == "/api/notes":
             return self._handle_notes_save()
         if self.path == "/api/desktop":
@@ -1194,6 +1202,33 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pass
 
     # ---- OnlyOffice web editor: config / doc-fetch / save-callback ----------
+
+    def _handle_office_new(self):
+        # POST {type} — create a blank document from a bundled template (in
+        # ~/Documents) and return its path, so opening the Office app with no
+        # file can start a new doc instead of a dead-end.
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            data = json.loads(self.rfile.read(length)) if length else {}
+        except Exception:
+            data = {}
+        spec = OFFICE_NEW.get(data.get("type") or "word")
+        if not spec:
+            return self._json(400, {"error": "unknown document type"})
+        ext, label = spec
+        tmpl = os.path.join(REPO_DIR, "office", "templates", f"new.{ext}")
+        if not os.path.isfile(tmpl):
+            return self._json(500, {"error": "blank template missing"})
+        try:
+            os.makedirs(OFFICE_NEW_DIR, exist_ok=True)
+            _chown_app(OFFICE_NEW_DIR)
+            dst = _unique_path(os.path.join(
+                OFFICE_NEW_DIR, f"{label} {time.strftime('%Y-%m-%d %H%M')}.{ext}"))
+            shutil.copyfile(tmpl, dst)
+            _chown_app(dst)
+        except OSError as e:
+            return self._json(500, {"error": f"could not create document: {e}"})
+        self._json(200, {"ok": True, "path": os.path.relpath(dst, OFFICE_HOME)})
 
     def _handle_office_config(self):
         # GET ?path= -> the signed DocEditor config the editor page mounts.

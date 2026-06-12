@@ -12,19 +12,60 @@
     color: #9ab; font: 15px system-ui, sans-serif; text-align: center; padding: 24px;
   }
   #msg b { color: #cde; }
+  .newdoc-title { color: #cde; font-size: 16px; font-weight: 600; margin: 0 0 18px; }
+  .newdoc-btns { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
+  .newdoc-btns button {
+    display: flex; flex-direction: column; align-items: center; gap: 8px;
+    width: 124px; padding: 20px 10px; cursor: pointer;
+    background: #12161d; color: #cde; border: 1px solid #2a3040; border-radius: 12px;
+    font-size: 30px; line-height: 1;
+  }
+  .newdoc-btns button:hover { background: #1b212b; border-color: #3a4452; }
+  .newdoc-btns button:disabled { opacity: 0.5; cursor: default; }
+  .newdoc-btns button span { font: 600 13px system-ui, sans-serif; color: #9ab; }
+  .newdoc-hint { color: #6a7a8a; font-size: 13px; margin: 20px 0 0; }
 </style>
 <!-- DocsAPI loader from the Document Server (proxied at /onlyoffice/). -->
 <script src="/onlyoffice/web-apps/apps/api/documents/api.js"></script>
 </head>
 <body>
-  <div id="msg">Open a document from <b>&nbsp;Files&nbsp;</b> — tap a Word/Excel/PowerPoint file and choose <b>&nbsp;Edit&nbsp;</b>.</div>
+  <div id="msg">
+    <div>
+      <p class="newdoc-title">Start a new document</p>
+      <div class="newdoc-btns">
+        <button data-new="word">📄<span>Document</span></button>
+        <button data-new="cell">📊<span>Spreadsheet</span></button>
+        <button data-new="slide">📽<span>Presentation</span></button>
+      </div>
+      <p class="newdoc-hint">…or open one from <b>Files</b> → <b>Edit</b>.</p>
+    </div>
+  </div>
   <div id="editor" style="display:none"></div>
 <script>
 (function() {
   var path = new URLSearchParams(location.search).get('path');
   var msg = document.getElementById('msg');
   var host = document.getElementById('editor');
-  if (!path) return;   // no document → show the placeholder
+  if (!path) {
+    // No document → let the user start a new one (creates a blank file, then
+    // reloads this page pointed at it).
+    var btns = msg.querySelectorAll('button[data-new]');
+    function setDisabled(v) { btns.forEach(function(b) { b.disabled = v; }); }
+    btns.forEach(function(b) {
+      b.addEventListener('click', function() {
+        setDisabled(true);
+        fetch('/api/office/new', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                   body: JSON.stringify({ type: b.getAttribute('data-new') }) })
+          .then(function(r) { return r.json(); })
+          .then(function(d) {
+            if (d && d.ok && d.path) location.search = '?path=' + encodeURIComponent(d.path);
+            else { alert((d && d.error) || 'Could not create the document.'); setDisabled(false); }
+          })
+          .catch(function() { alert('Could not reach the document service.'); setDisabled(false); });
+      });
+    });
+    return;
+  }
   msg.style.display = 'none';
   host.style.display = 'block';
 
