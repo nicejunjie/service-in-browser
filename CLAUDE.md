@@ -81,6 +81,7 @@ Services:
   - Terminal: `POST /api/terminals/{n}/start|stop`, `GET /api/terminals/status`
   - System: `GET /api/system/status` (CPU + per-core, MEM, GPU, VRAM, load_avg, etc.), `GET /api/health`
   - Browser: `POST /api/browser/open` (validated URL → remote Chromium via the xpra display)
+  - Office: `GET /api/office/preview?path=<rel-to-~>` (LibreOffice headless → PDF, cached by mtime under `~/.cache/vibetop-office`, served inline for the shell's read-only doc viewer) and `POST /api/office/open` (`{path}` → opens the file in LibreOffice on the xpra display for editing). Both resolve the path under `~` with `_resolve_under_home` (realpath, no escape) and gate on `OFFICE_RE`. Launched as APP_USER via `subprocess(user=…, env=…)` — argv form, no shell. Needs `libreoffice-writer/calc/impress` (installed by `browser/install.sh`)
   - Notes: `GET/POST /api/notes` (`~/.local/share/desktop-notes.md`)
   - Desktop state: `GET/POST /api/desktop` (`~/.local/share/desktop-state.json` — `{open: [appId,...], active: appId}`, shared between phone and computer)
   - Upload: `POST /api/upload` (streaming multipart parser, writes into `UPLOAD_DIR`, default `~/Uploads`), `GET /api/upload/list`, `POST /api/upload/clear`

@@ -44,6 +44,16 @@
   ].join("\n");
   document.head.appendChild(style);
 
+  // Office files (Word/Excel/PPT/ODF) get two extra toolbar buttons, shown only
+  // when such a file is open: View (server renders a read-only PDF in the shell)
+  // and Edit (opens it in LibreOffice on the Browser desktop). Both delegate to
+  // the parent shell, which holds the Cloudflare Access cookie for /api calls.
+  var OFFICE_RE = /\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf|csv)$/i;
+  var OFFICE_BUTTONS = [
+    { icon: "visibility", label: "View", act: "office-view" },
+    { icon: "border_color", label: "Edit", act: "office-edit" }
+  ];
+
   var RENAMES = {
     "Select multiple": "Select", "Switch view": "View", "Toggle sidebar": "Menu",
     "Select Multiple": "Select", "Switch View": "View", "Toggle Sidebar": "Menu"
@@ -122,10 +132,42 @@
     });
   }
 
+  function injectOfficeButtons() {
+    var header = document.querySelector("header");
+    if (!header || header.querySelector(".fb-office")) return;
+    var dropdown = header.querySelector("#dropdown");
+    if (!dropdown) return;
+    OFFICE_BUTTONS.forEach(function(def) {
+      var btn = document.createElement("button");
+      btn.className = "action fb-permanent fb-office";
+      btn.title = def.label;
+      btn.setAttribute("aria-label", def.label);
+      btn.setAttribute("data-icon", def.icon);
+      btn.style.display = "none";   // shown only for office files
+      btn.innerHTML = '<i class="material-icons">' + def.icon + '</i><span>' + def.label + '</span>';
+      btn.addEventListener("click", function() {
+        var fp = getFilePath();
+        if (fp && OFFICE_RE.test(fp)) {
+          try { window.top.postMessage({ type: def.act, path: fp }, "*"); } catch (e) {}
+        }
+      });
+      header.insertBefore(btn, dropdown);
+    });
+  }
+
+  function updateOfficeButtons() {
+    var fp = getFilePath();
+    var show = !!(fp && OFFICE_RE.test(fp));
+    document.querySelectorAll("header .fb-office").forEach(function(btn) {
+      btn.style.display = show ? "" : "none";
+      btn.classList.remove("disabled");
+    });
+  }
+
   function updatePermanentButtons() {
     var selected = hasSelection();
     var filePath = getFilePath();
-    document.querySelectorAll("header .fb-permanent").forEach(function(btn) {
+    document.querySelectorAll("header .fb-permanent:not(.fb-office)").forEach(function(btn) {
       var icon = btn.getAttribute("data-icon");
       // Browser button only active for files, not folders
       var active = icon === "public" ? !!filePath : selected;
@@ -153,7 +195,9 @@
     patching = true;
     shortenLabels();
     injectPermanentButtons();
+    injectOfficeButtons();
     updatePermanentButtons();
+    updateOfficeButtons();
     hideVueButtons();
     patching = false;
   }

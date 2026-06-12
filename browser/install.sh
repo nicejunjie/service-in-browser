@@ -136,6 +136,16 @@ REPO_EOF
     if [ ! -f /etc/udev/rules.d/99-uinput.rules ]; then
         echo 'KERNEL=="uinput", MODE="0666"' | write_root /etc/udev/rules.d/99-uinput.rules
     fi
+
+    # LibreOffice — powers the Files app's office support: "View" renders the
+    # doc to PDF headlessly, "Edit" opens it on this xpra desktop. Slim set
+    # (Writer/Calc/Impress) + Liberation fonts for faithful Arial/Times layout.
+    if ! command -v soffice >/dev/null 2>&1; then
+        echo "== installing libreoffice (office view/edit) =="
+        run sudo apt-get install -y --no-install-recommends \
+            libreoffice-writer libreoffice-calc libreoffice-impress \
+            libreoffice-gtk3 fonts-liberation
+    fi
 fi
 
 # 2. Stop legacy VNC services if present -------------------------------------

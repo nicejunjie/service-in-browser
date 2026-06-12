@@ -14,7 +14,7 @@ dictation working. Deploys to any Ubuntu host with one command (AMD or NVIDIA).
 
 - **Terminal** — persistent bash sessions over ttyd; tabs survive disconnects via a custom `claude-session` daemon (256 KB ring buffer + 50k-line xterm.js scrollback). On touch, tapping the terminal raises the keyboard via an in-page overlay that makes **iOS dictation work** (no character pile-up); on Windows, Ctrl+V pastes cleanly
 - **Browser** — a real, persistent Chromium driven by xpra's HTML5 client; mobile gets tap-click, drag-scroll, two-finger pinch zoom, and a toggleable on-screen keyboard
-- **Files** — FileBrowser rooted at `~`, every toolbar action visible inline (wraps to multiple rows on mobile)
+- **Files** — FileBrowser rooted at `~`, every toolbar action visible inline (wraps to multiple rows on mobile). Word/Excel/PPT files get **View** (server renders a read-only PDF, shown in an in-app viewer) and **Edit** (opens in LibreOffice on the Browser desktop) buttons
 - **Notes** — single-page Markdown scratchpad, auto-saves
 - **Monitor** — live CPU/MEM/GPU charts, htop-style load average, top processes
 - **Upload** — quick photo-sync drop zone; per-file progress, In-folder listing, Open-in-Files deep link

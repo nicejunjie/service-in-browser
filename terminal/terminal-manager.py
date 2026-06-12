@@ -11,6 +11,7 @@ Endpoints:
   GET  /api/system/status         — CPU, memory, uptime, terminal count
 """
 
+import hashlib
 import http.server
 import json
 import os
@@ -22,6 +23,7 @@ import subprocess
 import sys
 import time
 import threading
+import urllib.parse
 from concurrent.futures import ThreadPoolExecutor
 
 MAX_INSTANCE = 50
@@ -106,6 +108,18 @@ UPLOAD_DIR = os.environ.get(
 # "health" URL; those are added to /api/health so the Home Service page can show
 # live dots without baking personal hostnames into the repo.
 SERVICES_FILE = os.path.expanduser(f"~{APP_USER}/claude-web-www/services.json")
+
+# ---- Office (Word/Excel/PPT) view & edit -----------------------------------
+# View: convert to PDF with headless LibreOffice (cached) and serve it inline.
+# Edit: open the file in LibreOffice on the xpra desktop (the Browser app).
+OFFICE_RE = re.compile(r"\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf|csv)$", re.I)
+OFFICE_HOME = os.path.expanduser(f"~{APP_USER}")
+OFFICE_CACHE_DIR = os.path.join(OFFICE_HOME, ".cache", "vibetop-office")
+# A LibreOffice user profile dedicated to headless conversion, kept separate
+# from the interactive instance so a "View" never collides with an open "Edit".
+OFFICE_CONVERT_PROFILE = os.path.join(OFFICE_CACHE_DIR, "lo-convert-profile")
+OFFICE_DISPLAY = os.environ.get("BROWSER_DISPLAY", ":99")  # xpra display
+_office_convert_lock = threading.Lock()
 
 # The git checkout this manager runs from: <repo>/terminal/terminal-manager.py.
 # The Update app pulls + redeploys from here.
@@ -264,6 +278,83 @@ def _chown_app(path):
         os.chown(path, pw.pw_uid, pw.pw_gid)
     except Exception:
         pass
+
+
+def _resolve_under_home(rel):
+    """Map a FileBrowser-relative path to an absolute file under APP_USER's home,
+    refusing anything that escapes it (symlinks resolved). Returns None if the
+    path is unsafe or not a regular file."""
+    if not rel:
+        return None
+    rel = rel.lstrip("/")
+    base = os.path.realpath(OFFICE_HOME)
+    full = os.path.realpath(os.path.join(base, rel))
+    if full != base and not full.startswith(base + os.sep):
+        return None
+    if not os.path.isfile(full):
+        return None
+    return full
+
+
+def _office_user_env(user):
+    """Environment for running LibreOffice as APP_USER on the xpra desktop —
+    HOME (for the LO profile), DISPLAY, and the user's session bus."""
+    try:
+        pw = pwd.getpwnam(user)
+    except KeyError:
+        return None
+    return {
+        "HOME": pw.pw_dir,
+        "PATH": "/usr/bin:/bin",
+        "DISPLAY": OFFICE_DISPLAY,
+        "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{pw.pw_uid}/bus",
+        "LANG": os.environ.get("LANG", "en_US.UTF-8"),
+    }
+
+
+def _office_convert_to_pdf(src):
+    """Convert `src` to PDF via headless LibreOffice, cached by realpath+mtime.
+    Returns the cached PDF path, or None on failure. Serialized: LibreOffice
+    locks its profile, so two conversions can't share one safely."""
+    soffice = shutil.which("soffice") or shutil.which("libreoffice")
+    if not soffice:
+        return None
+    try:
+        st = os.stat(src)
+    except OSError:
+        return None
+    key = hashlib.sha1(f"{src}:{int(st.st_mtime)}:{st.st_size}".encode()).hexdigest()
+    cached = os.path.join(OFFICE_CACHE_DIR, key + ".pdf")
+    if os.path.isfile(cached):
+        return cached
+    with _office_convert_lock:
+        if os.path.isfile(cached):       # another thread just made it
+            return cached
+        os.makedirs(OFFICE_CACHE_DIR, exist_ok=True)
+        _chown_app(OFFICE_CACHE_DIR)
+        _chown_app(os.path.dirname(OFFICE_CACHE_DIR))
+        env = _office_user_env(APP_USER)
+        if env is None:
+            return None
+        try:
+            p = subprocess.run(
+                [soffice, "--headless", "--nologo", "--norestore",
+                 "-env:UserInstallation=file://" + OFFICE_CONVERT_PROFILE,
+                 "--convert-to", "pdf", "--outdir", OFFICE_CACHE_DIR, src],
+                env=env, user=APP_USER, capture_output=True, text=True, timeout=120)
+        except Exception:
+            return None
+        # LibreOffice writes <stem>.pdf into outdir; rename to the cache key.
+        produced = os.path.join(OFFICE_CACHE_DIR,
+                                os.path.splitext(os.path.basename(src))[0] + ".pdf")
+        if not os.path.isfile(produced):
+            return None
+        try:
+            os.replace(produced, cached)
+        except OSError:
+            return None
+        _chown_app(cached)
+        return cached
 
 
 def _git(args, timeout=60):
@@ -828,6 +919,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_terminal(m)
         if self.path == "/api/browser/open":
             return self._handle_browser_open()
+        if self.path == "/api/office/open":
+            return self._handle_office_open()
         if self.path == "/api/notes":
             return self._handle_notes_save()
         if self.path == "/api/desktop":
@@ -999,6 +1092,68 @@ class Handler(http.server.BaseHTTPRequestHandler):
         )
         self._json(200, {"ok": True, "url": url})
 
+    def _handle_office_preview(self):
+        # GET /api/office/preview?path=<rel-to-home> — convert to PDF (cached)
+        # and serve it inline so the shell can show it in a read-only viewer.
+        q = urllib.parse.urlparse(self.path).query
+        rel = urllib.parse.parse_qs(q).get("path", [""])[0]
+        src = _resolve_under_home(rel)
+        if not src or not OFFICE_RE.search(src):
+            self._json(400, {"error": "not a viewable office file"})
+            return
+        pdf = _office_convert_to_pdf(src)
+        if not pdf:
+            self._json(500, {"error": "conversion failed (is LibreOffice installed?)"})
+            return
+        try:
+            with open(pdf, "rb") as f:
+                body = f.read()
+        except OSError:
+            self._json(500, {"error": "could not read converted pdf"})
+            return
+        self.send_response(200)
+        self.send_header("Content-Type", "application/pdf")
+        self.send_header("Content-Length", str(len(body)))
+        # Inline so the iframe renders it; private/short cache (the converter
+        # already caches on disk by mtime).
+        self.send_header("Content-Disposition", "inline")
+        self.send_header("Cache-Control", "private, max-age=30")
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
+
+    def _handle_office_open(self):
+        # POST {path} — open the file in LibreOffice on the xpra desktop. A
+        # running LibreOffice picks up the file in its existing instance.
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length > 4096:
+            self._json(400, {"error": "payload too large"})
+            return
+        body = self.rfile.read(length) if length else b""
+        try:
+            data = json.loads(body) if body else {}
+        except json.JSONDecodeError:
+            self._json(400, {"error": "invalid json"})
+            return
+        src = _resolve_under_home(data.get("path", ""))
+        if not src or not OFFICE_RE.search(src):
+            self._json(400, {"error": "not an editable office file"})
+            return
+        soffice = shutil.which("soffice") or shutil.which("libreoffice")
+        if not soffice:
+            self._json(500, {"error": "LibreOffice not installed"})
+            return
+        env = _office_user_env(APP_USER)
+        if env is None:
+            self._json(500, {"error": f"unknown user: {APP_USER}"})
+            return
+        # argv form (no shell) — the filename never gets shell-parsed.
+        subprocess.Popen([soffice, src], env=env, user=APP_USER,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        self._json(200, {"ok": True})
+
     def _handle_terminal(self, m):
         n, action = int(m.group(1)), m.group(2)
         if n < 1 or n > MAX_INSTANCE:
@@ -1157,6 +1312,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/terminals/status":
             self._json(200, {"running": self._get_running_terminals()})
             return
+        if self.path.startswith("/api/office/preview"):
+            return self._handle_office_preview()
         if self.path == "/api/update":
             self._json(200, self._update_version_info())
             return
