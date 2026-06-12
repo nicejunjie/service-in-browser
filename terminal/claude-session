@@ -66,6 +66,21 @@ def set_nonblock(fd):
     fcntl.fcntl(fd, fcntl.F_SETFL, flags | os.O_NONBLOCK)
 
 
+def write_all(fd, data):
+    """Write every byte of `data` to a blocking fd, looping over short writes
+    and EINTR. A bare os.write() can return fewer bytes than given (signals,
+    large buffers), and dropping the remainder silently corrupts/truncates the
+    terminal stream — which on the replay-on-connect burst looks like 'content
+    didn't fully load.'"""
+    mv = memoryview(data)
+    while mv:
+        try:
+            n = os.write(fd, mv)
+        except InterruptedError:
+            continue
+        mv = mv[n:]
+
+
 # ---------------------------------------------------------------------------
 # serve
 # ---------------------------------------------------------------------------
@@ -407,7 +422,7 @@ def cmd_attach(instance):
                         data = b''
                     if not data:
                         return
-                    os.write(stdout_fd, data)
+                    write_all(stdout_fd, data)
     finally:
         termios.tcsetattr(stdin_fd, termios.TCSADRAIN, old_attrs)
         sock.close()

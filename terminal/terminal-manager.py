@@ -160,9 +160,24 @@ def _read_nvidia_gpu():
     return out
 
 
+_root_disk_cached = False
+_root_disk_value = None
+
+
 def _root_disk():
     """Block device backing '/', partition suffix stripped (nvme1n1p3 -> nvme1n1,
-    sda2 -> sda), for matching /proc/diskstats. None if it can't be determined."""
+    sda2 -> sda), for matching /proc/diskstats. None if it can't be determined.
+    The root device is fixed at runtime, so the result is computed once and
+    cached — /api/system/status (polled every few seconds) hit this every call."""
+    global _root_disk_cached, _root_disk_value
+    if _root_disk_cached:
+        return _root_disk_value
+    _root_disk_value = _root_disk_uncached()
+    _root_disk_cached = True
+    return _root_disk_value
+
+
+def _root_disk_uncached():
     try:
         with open("/proc/mounts") as f:
             for line in f:
@@ -829,6 +844,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         os.makedirs(os.path.dirname(NOTES_FILE), exist_ok=True)
         with open(NOTES_FILE, "w") as f:
             f.write(content)
+        _chown_app(NOTES_FILE)  # written by root; keep it owned by APP_USER
         self._json(200, {"ok": True})
 
     def _handle_upload(self):
@@ -897,6 +913,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         os.makedirs(os.path.dirname(DESKTOP_STATE_FILE), exist_ok=True)
         with open(DESKTOP_STATE_FILE, "w") as f:
             json.dump(state, f)
+        _chown_app(DESKTOP_STATE_FILE)  # written by root; keep it owned by APP_USER
         self._json(200, {"ok": True})
 
     def _handle_browser_open(self):

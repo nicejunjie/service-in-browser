@@ -49,6 +49,16 @@ if ! [ -d "$APP_DIR/systemd" ]; then
     echo "templates not found under APP_DIR=$APP_DIR" >&2; exit 1
 fi
 
+run() {
+    if (( DRY_RUN )); then printf '+ %s\n' "$*"; else "$@"; fi
+}
+write_root() {
+    local dest="$1"
+    if (( DRY_RUN )); then echo "+ write -> $dest"; sed 's/^/    | /'
+    else sudo tee "$dest" >/dev/null
+    fi
+}
+
 # Auto-install Chromium (snap) when nothing is present and we're allowed to —
 # the manager's /api/browser/open expects the snap-confined xpra-profile path,
 # so snap chromium is the supported browser. (Gated by INSTALL_DEPS.)
@@ -75,16 +85,6 @@ if [ -z "${BROWSER_CMD:-}" ]; then
         exit 1
     fi
 fi
-
-run() {
-    if (( DRY_RUN )); then printf '+ %s\n' "$*"; else "$@"; fi
-}
-write_root() {
-    local dest="$1"
-    if (( DRY_RUN )); then echo "+ write -> $dest"; sed 's/^/    | /'
-    else sudo tee "$dest" >/dev/null
-    fi
-}
 
 cat <<EOF
 claude-browser install (xpra)
