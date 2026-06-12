@@ -916,6 +916,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             info.update({"commit": commit, "date": date, "subject": subject})
         else:
             info["error"] = head
+        # Recent commit history (the changelog). \x1f is a field separator that
+        # never appears in a subject. The first entry is HEAD (what's installed).
+        hok, hist = self._git_as_user(
+            ["log", "-40", "--no-merges", "--format=%h\x1f%cd\x1f%s", "--date=short"])
+        history = []
+        if hok and hist:
+            for line in hist.splitlines():
+                parts = line.split("\x1f")
+                if len(parts) == 3:
+                    history.append({"commit": parts[0], "date": parts[1],
+                                    "subject": parts[2]})
+        info["history"] = history
         return info
 
     def _handle_update(self):

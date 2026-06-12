@@ -53,6 +53,15 @@
     font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #8a9aaa; max-height: 220px; overflow-y: auto;
   }
   .step pre:empty { display: none; }
+  /* Update history (recent commits) */
+  .history { background: #12161d; border: 1px solid #20262f; border-radius: 10px; overflow: hidden; margin-top: 14px; }
+  .history .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #556; padding: 12px 14px 8px; }
+  .hist-item { display: flex; gap: 10px; align-items: baseline; padding: 7px 14px; border-top: 1px solid #1b212b; font-size: 13px; }
+  .hist-item.cur { background: #161d27; }
+  .hist-h { font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #6cf; flex-shrink: 0; width: 8ch; }
+  .hist-d { color: #5a6a7a; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; flex-shrink: 0; width: 10ch; }
+  .hist-s { color: #c6cdd6; flex: 1; min-width: 0; word-break: break-word; }
+  .hist-badge { font-size: 10px; color: #4a8; border: 1px solid #2a5a3e; border-radius: 4px; padding: 1px 6px; align-self: center; flex-shrink: 0; }
 </style>
 </head>
 <body>
@@ -72,6 +81,10 @@
       (desktop, browser, terminal/nginx). The API restarts itself only if its own code changed.</div>
     <div class="status" id="status"></div>
     <div class="log" id="log"></div>
+    <div class="history" id="history-wrap" style="display:none">
+      <div class="lbl">Update history</div>
+      <div id="history"></div>
+    </div>
   </div>
 <script>
 (function() {
@@ -81,11 +94,33 @@
 
   function setStatus(msg, cls) { statusEl.textContent = msg || ''; statusEl.className = 'status ' + (cls || ''); }
 
+  function renderHistory(history, cur) {
+    var wrap = document.getElementById('history-wrap');
+    var el = document.getElementById('history');
+    el.innerHTML = '';
+    if (!history || !history.length) { wrap.style.display = 'none'; return; }
+    history.forEach(function(c) {
+      var row = document.createElement('div');
+      row.className = 'hist-item' + (c.commit === cur ? ' cur' : '');
+      var h = document.createElement('span'); h.className = 'hist-h'; h.textContent = '#' + c.commit;
+      var d = document.createElement('span'); d.className = 'hist-d'; d.textContent = c.date;
+      var s = document.createElement('span'); s.className = 'hist-s'; s.textContent = c.subject;
+      row.appendChild(h); row.appendChild(d); row.appendChild(s);
+      if (c.commit === cur) {
+        var b = document.createElement('span'); b.className = 'hist-badge'; b.textContent = 'installed';
+        row.appendChild(b);
+      }
+      el.appendChild(row);
+    });
+    wrap.style.display = 'block';
+  }
+
   function loadVersion() {
     fetch('/api/update').then(function(r) { return r.json(); }).then(function(d) {
       document.getElementById('v-commit').textContent = d.commit ? ('#' + d.commit) : (d.error || 'unknown');
       document.getElementById('v-subject').textContent = d.subject || '';
       document.getElementById('v-date').textContent = d.date || '';
+      renderHistory(d.history, d.commit);
     }).catch(function() {
       document.getElementById('v-commit').textContent = 'could not read version';
     });
