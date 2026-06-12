@@ -36,7 +36,14 @@ done
 # --- Remote mode: ship the repo, run ourselves on the far side, health-check ---
 if [ -n "$REMOTE" ]; then
     echo "==> syncing repo to $REMOTE:~/vibetop"
-    rsync -az --delete --exclude='.git' --exclude='*.pyc' "$REPO_DIR/" "$REMOTE":vibetop/
+    # Include .git so the target is a real checkout (the in-app Updater runs
+    # `git log`/`git pull`); it's tiny. Then repoint origin at HTTPS so the
+    # Updater can pull a public repo without an SSH key on the target.
+    rsync -az --delete --exclude='*.pyc' "$REPO_DIR/" "$REMOTE":vibetop/
+    https_url="$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null | sed -E 's#git@([^:]+):#https://\1/#' || true)"
+    if [ -n "$https_url" ]; then
+        ssh "$REMOTE" "git -C ~/vibetop remote set-url origin '$https_url' 2>/dev/null || true; git config --global --add safe.directory ~/vibetop 2>/dev/null || true"
+    fi
     echo "==> deploying on $REMOTE"
     ssh "$REMOTE" "cd ~/vibetop && DEBIAN_FRONTEND=noninteractive ./deploy.sh ${PASS[*]:-}"
     echo "==> remote health check (loopback http codes)"
