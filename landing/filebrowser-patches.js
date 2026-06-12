@@ -135,8 +135,9 @@
   function injectOfficeButtons() {
     var header = document.querySelector("header");
     if (!header || header.querySelector(".fb-office")) return;
+    // Insert before the action dropdown when present (listing view); on the
+    // single-file preview page there's no #dropdown, so append to the header.
     var dropdown = header.querySelector("#dropdown");
-    if (!dropdown) return;
     OFFICE_BUTTONS.forEach(function(def) {
       var btn = document.createElement("button");
       btn.className = "action fb-permanent fb-office";
@@ -151,8 +152,30 @@
           try { window.top.postMessage({ type: def.act, path: fp }, "*"); } catch (e) {}
         }
       });
-      header.insertBefore(btn, dropdown);
+      if (dropdown) header.insertBefore(btn, dropdown);
+      else header.appendChild(btn);
     });
+  }
+
+  // On touch, a tap on a file OPENS it in FileBrowser — which for office files
+  // just downloads (no preview). Intercept the tap and open our viewer instead.
+  // (Long-press still enters FileBrowser's selection mode, so selecting office
+  // files for rename/delete is unaffected.) Desktop keeps native behavior and
+  // uses the toolbar View/Edit buttons.
+  var IS_TOUCH = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+  if (IS_TOUCH) {
+    document.addEventListener("click", function(e) {
+      var item = e.target.closest("[aria-label]");
+      if (!item || !item.closest("main")) return;        // must be a listing item
+      if (item.getAttribute("data-dir") === "true") return;
+      var name = item.getAttribute("aria-label") || "";
+      if (!OFFICE_RE.test(name)) return;
+      var dir = location.pathname.replace(/.*\/files\/?/, "");
+      if (dir && !/\/$/.test(dir)) return;               // only from a folder listing
+      e.preventDefault();
+      e.stopPropagation();
+      try { window.top.postMessage({ type: "office-view", path: dir + name }, "*"); } catch (err) {}
+    }, true);
   }
 
   function updateOfficeButtons() {

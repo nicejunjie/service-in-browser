@@ -244,10 +244,12 @@
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 70vw;
   }
   .dv-spacer { flex: 1; }
-  .dv-close {
-    font: 600 14px system-ui, sans-serif; cursor: pointer; color: #fff;
-    background: #2d6cc0; border: 1px solid #2d6cc0; border-radius: 8px; padding: 8px 16px;
+  .dv-edit, .dv-close {
+    font: 600 14px system-ui, sans-serif; cursor: pointer; border-radius: 8px; padding: 8px 16px;
   }
+  .dv-edit { color: #cde; background: transparent; border: 1px solid #2a3040; margin-right: 8px; }
+  .dv-edit:hover { background: #1b212b; color: #fff; }
+  .dv-close { color: #fff; background: #2d6cc0; border: 1px solid #2d6cc0; }
   .dv-close:hover { background: #3a7adb; }
   .dv-body { flex: 1; position: relative; background: #333; }
   .dv-body iframe { width: 100%; height: 100%; border: 0; display: block; }
@@ -266,6 +268,7 @@
     <div class="dv-bar">
       <span class="dv-title" id="dv-title">Document</span>
       <span class="dv-spacer"></span>
+      <button class="dv-edit" id="dv-edit" title="Open in LibreOffice for editing">✎ Edit</button>
       <button class="dv-close" id="dv-close">✕ Close</button>
     </div>
     <div class="dv-body" id="dv-body"><div class="dv-loading">Rendering…</div></div>
@@ -282,7 +285,7 @@
     <div class="sm-item" data-id="upload"><div class="sm-icon">⬆</div><div><div class="sm-name">Upload</div><div class="sm-desc">Quick file upload to ~/Uploads</div></div></div>
     <div class="sm-title sm-title-system">System</div>
     <div class="sm-item" data-id="update"><div class="sm-icon">⬇</div><div><div class="sm-name">Update</div><div class="sm-desc">Pull latest from GitHub &amp; redeploy</div></div></div>
-    <div class="sm-build"><span class="build-tag">Vibetop · v1.3.0</span></div>
+    <div class="sm-build"><span class="build-tag">Vibetop · v1.3.1</span></div>
   </div>
 
   <div class="taskbar" id="taskbar">
@@ -627,15 +630,7 @@
       openDoc(e.data.path);
     }
     if (e.data.type === 'office-edit' && e.data.path) {
-      // Open the doc in LibreOffice on the Browser desktop, then switch to it.
-      fetch('/api/office/open', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ path: e.data.path })
-      }).then(function(r) { return r.json(); }).then(function(d) {
-        if (d && d.ok) launch('browser');
-        else alert((d && d.error) || 'Could not open the document for editing.');
-      }).catch(function() { alert('Could not reach the document service.'); });
+      editDoc(e.data.path);
     }
     if (e.data.type === 'open-files-at') {
       // Deep-link Files at a path relative to FileBrowser's root (~). We set
@@ -652,7 +647,9 @@
   // --- document viewer (read-only office preview) ---
   var dvEl = document.getElementById('docviewer');
   var dvBody = document.getElementById('dv-body');
+  var dvDocPath = null;   // the doc currently shown (for the Edit button)
   function openDoc(path) {
+    dvDocPath = path;
     var name = path.split('/').pop() || 'Document';
     document.getElementById('dv-title').textContent = name;
     dvBody.innerHTML = '<div class="dv-loading">Rendering…</div>';
@@ -669,8 +666,23 @@
   function closeDoc() {
     dvEl.classList.remove('open');
     dvBody.innerHTML = '';   // stop rendering / free the PDF
+    dvDocPath = null;
+  }
+  // Open a doc in LibreOffice on the Browser desktop, then switch to it.
+  function editDoc(path) {
+    fetch('/api/office/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: path })
+    }).then(function(r) { return r.json(); }).then(function(d) {
+      if (d && d.ok) launch('browser');
+      else alert((d && d.error) || 'Could not open the document for editing.');
+    }).catch(function() { alert('Could not reach the document service.'); });
   }
   document.getElementById('dv-close').addEventListener('click', closeDoc);
+  document.getElementById('dv-edit').addEventListener('click', function() {
+    if (dvDocPath) { var p = dvDocPath; closeDoc(); editDoc(p); }
+  });
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape' && dvEl.classList.contains('open')) closeDoc();
   });
