@@ -53,15 +53,26 @@
     font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; color: #8a9aaa; max-height: 220px; overflow-y: auto;
   }
   .step pre:empty { display: none; }
-  /* Update history (recent commits) */
+  /* Update history (per-host self-update log) */
   .history { background: #12161d; border: 1px solid #20262f; border-radius: 10px; overflow: hidden; margin-top: 14px; }
-  .history .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #556; padding: 12px 14px 8px; }
-  .hist-item { display: flex; gap: 10px; align-items: baseline; padding: 7px 14px; border-top: 1px solid #1b212b; font-size: 13px; }
-  .hist-item.cur { background: #161d27; }
-  .hist-h { font: 600 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #6cf; flex-shrink: 0; width: 8ch; }
-  .hist-d { color: #5a6a7a; font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; flex-shrink: 0; width: 10ch; }
-  .hist-s { color: #c6cdd6; flex: 1; min-width: 0; word-break: break-word; }
-  .hist-badge { font-size: 10px; color: #4a8; border: 1px solid #2a5a3e; border-radius: 4px; padding: 1px 6px; align-self: center; flex-shrink: 0; }
+  .hist-head { display: flex; align-items: center; padding: 10px 14px 8px; }
+  .hist-head .lbl { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #556; }
+  .hist-head .spacer { flex: 1; }
+  .hist-clear { font: 600 11px system-ui, sans-serif; padding: 5px 12px; border-radius: 6px; border: 1px solid #44343a; background: #231a1d; color: #d99; }
+  .hist-clear:hover { background: #2e2024; color: #fbb; }
+  .hist-item { padding: 8px 14px; border-top: 1px solid #1b212b; }
+  .hist-row { display: flex; gap: 10px; align-items: flex-start; }
+  .hist-ic { flex-shrink: 0; font-size: 13px; line-height: 1.45; }
+  .hist-main { flex: 1; min-width: 0; }
+  .hist-title { font: 600 13px ui-monospace, SFMono-Regular, Menlo, monospace; color: #bcd; }
+  .hist-item.evt-deployed .hist-title { color: #4a8; }
+  .hist-item.evt-failed .hist-title { color: #f88; }
+  .hist-when { font: 11px ui-monospace, SFMono-Regular, Menlo, monospace; color: #5a6a7a; margin-top: 1px; }
+  .hist-commits { margin-top: 5px; display: flex; flex-direction: column; gap: 2px; }
+  .hist-commit, .hist-sub { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; color: #9fb0bd; word-break: break-word; }
+  .hist-sub { margin-top: 3px; }
+  .hist-sub.err { color: #d99; }
+  .hist-empty { padding: 12px 14px; font-size: 13px; color: #5a6a7a; }
 </style>
 </head>
 <body>
@@ -82,7 +93,11 @@
     <div class="status" id="status"></div>
     <div class="log" id="log"></div>
     <div class="history" id="history-wrap" style="display:none">
-      <div class="lbl">Update history</div>
+      <div class="hist-head">
+        <span class="lbl">Update history</span>
+        <span class="spacer"></span>
+        <button id="hist-clear" class="hist-clear">Clear</button>
+      </div>
       <div id="history"></div>
     </div>
   </div>
@@ -94,25 +109,53 @@
 
   function setStatus(msg, cls) { statusEl.textContent = msg || ''; statusEl.className = 'status ' + (cls || ''); }
 
-  function renderHistory(history, cur) {
+  function fmtTime(t) {
+    try { return new Date(t * 1000).toLocaleString(); } catch (e) { return ''; }
+  }
+
+  // Per-host update log: a list of real events (deployed / updated / failed),
+  // newest first. Not the git changelog.
+  function renderHistory(history) {
     var wrap = document.getElementById('history-wrap');
     var el = document.getElementById('history');
     el.innerHTML = '';
-    if (!history || !history.length) { wrap.style.display = 'none'; return; }
-    history.forEach(function(c) {
-      var row = document.createElement('div');
-      row.className = 'hist-item' + (c.commit === cur ? ' cur' : '');
-      var h = document.createElement('span'); h.className = 'hist-h'; h.textContent = '#' + c.commit;
-      var d = document.createElement('span'); d.className = 'hist-d'; d.textContent = c.date;
-      var s = document.createElement('span'); s.className = 'hist-s'; s.textContent = c.subject;
-      row.appendChild(h); row.appendChild(d); row.appendChild(s);
-      if (c.commit === cur) {
-        var b = document.createElement('span'); b.className = 'hist-badge'; b.textContent = 'installed';
-        row.appendChild(b);
+    wrap.style.display = 'block';
+    if (!history || !history.length) {
+      el.innerHTML = '<div class="hist-empty">No updates recorded yet.</div>';
+      return;
+    }
+    history.forEach(function(e) {
+      var ev = e.event || 'updated';
+      var row = document.createElement('div'); row.className = 'hist-item evt-' + ev;
+      var head = document.createElement('div'); head.className = 'hist-row';
+      var ic = document.createElement('span'); ic.className = 'hist-ic';
+      ic.textContent = ev === 'deployed' ? '📦' : (ev === 'failed' ? '⚠️' : '⬆️');
+      var main = document.createElement('div'); main.className = 'hist-main';
+      var title = document.createElement('div'); title.className = 'hist-title';
+      if (ev === 'deployed') title.textContent = 'Deployed' + (e.to ? '  #' + e.to : '');
+      else if (ev === 'failed') title.textContent = 'Update failed';
+      else title.textContent = 'Updated  ' + (e.from ? '#' + e.from + ' → ' : '') + '#' + (e.to || '');
+      var when = document.createElement('div'); when.className = 'hist-when'; when.textContent = fmtTime(e.time);
+      main.appendChild(title); main.appendChild(when);
+      if (ev === 'updated' && e.commits && e.commits.length) {
+        var box = document.createElement('div'); box.className = 'hist-commits';
+        e.commits.forEach(function(c) {
+          var li = document.createElement('div'); li.className = 'hist-commit';
+          li.textContent = '#' + c.commit + '  ' + c.subject;
+          box.appendChild(li);
+        });
+        main.appendChild(box);
+      } else if (ev === 'deployed' && e.subject) {
+        var s = document.createElement('div'); s.className = 'hist-sub'; s.textContent = e.subject;
+        main.appendChild(s);
+      } else if (ev === 'failed' && e.message) {
+        var m = document.createElement('div'); m.className = 'hist-sub err'; m.textContent = e.message;
+        main.appendChild(m);
       }
+      head.appendChild(ic); head.appendChild(main);
+      row.appendChild(head);
       el.appendChild(row);
     });
-    wrap.style.display = 'block';
   }
 
   function loadVersion() {
@@ -120,11 +163,17 @@
       document.getElementById('v-commit').textContent = d.commit ? ('#' + d.commit) : (d.error || 'unknown');
       document.getElementById('v-subject').textContent = d.subject || '';
       document.getElementById('v-date').textContent = d.date || '';
-      renderHistory(d.history, d.commit);
+      renderHistory(d.history);
     }).catch(function() {
       document.getElementById('v-commit').textContent = 'could not read version';
     });
   }
+
+  document.getElementById('hist-clear').addEventListener('click', function() {
+    if (!confirm('Clear the update history for this host?')) return;
+    fetch('/api/update/history/clear', { method: 'POST' })
+      .then(function() { loadVersion(); }).catch(function() {});
+  });
 
   function renderLog(steps) {
     logEl.innerHTML = '';

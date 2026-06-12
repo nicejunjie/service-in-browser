@@ -41,6 +41,10 @@ def _app_user():
 APP_USER = _app_user()
 NOTES_FILE = os.path.expanduser(f"~{APP_USER}/.local/share/desktop-notes.md")
 DESKTOP_STATE_FILE = os.path.expanduser(f"~{APP_USER}/.local/share/desktop-state.json")
+# Per-host update log (real history of THIS deployment's self-updates, seeded
+# with a "deployed" baseline on first run) — not the git changelog.
+UPDATE_HISTORY_FILE = os.path.expanduser(f"~{APP_USER}/.local/share/vibetop-update-history.json")
+UPDATE_HISTORY_MAX = 200
 UPLOAD_DIR = os.environ.get(
     "UPLOAD_DIR", os.path.expanduser(f"~{APP_USER}/Uploads")
 )
@@ -191,6 +195,54 @@ def _chown_app(path):
         os.chown(path, pw.pw_uid, pw.pw_gid)
     except Exception:
         pass
+
+
+def _git(args, timeout=60):
+    """Run git in REPO_DIR as APP_USER (the repo owner — root trips git's
+    dubious-ownership guard, and only APP_USER holds the credentials). Module
+    level so both the request handler and startup seeding can use it."""
+    cmd = ["sudo", "-n", "-u", APP_USER, "-H", "git", "-C", REPO_DIR] + list(args)
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode == 0, (p.stdout + p.stderr).strip()
+    except Exception as e:
+        return False, str(e)
+
+
+def _read_update_history():
+    try:
+        with open(UPDATE_HISTORY_FILE) as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _write_update_history(entries):
+    try:
+        os.makedirs(os.path.dirname(UPDATE_HISTORY_FILE), exist_ok=True)
+        with open(UPDATE_HISTORY_FILE, "w") as f:
+            json.dump(entries[-UPDATE_HISTORY_MAX:], f)
+        _chown_app(UPDATE_HISTORY_FILE)
+    except Exception:
+        pass
+
+
+def _append_update_history(entry):
+    h = _read_update_history()
+    h.append(entry)
+    _write_update_history(h)
+
+
+def _seed_update_history():
+    """Write a 'deployed' baseline the first time the manager runs (≈ deploy
+    time), so the per-host log starts from when this deployment came up."""
+    if os.path.exists(UPDATE_HISTORY_FILE):
+        return
+    ok, head = _git(["log", "-1", "--format=%h\t%s"])
+    commit, subject = (head.split("\t", 1) + [""])[:2] if (ok and "\t" in head) else ("", "")
+    _write_update_history([{"time": int(time.time()), "event": "deployed",
+                            "to": commit, "subject": subject}])
 
 
 def _safe_upload_name(name):
@@ -737,6 +789,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_upload_clear()
         if self.path == "/api/update":
             return self._handle_update()
+        if self.path == "/api/update/history/clear":
+            _write_update_history([])
+            return self._json(200, {"ok": True})
         self.send_error(404)
 
     def _handle_upload_clear(self):
@@ -895,17 +950,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     # ---- Update (git pull + redeploy) -------------------------------------
     def _git_as_user(self, args, timeout=60):
-        """Run a git command in REPO_DIR as APP_USER (the repo owner — root would
-        trip git's 'dubious ownership' guard, and only APP_USER has the GitHub
-        SSH key). `sudo -u … -H` (not `su -`) avoids a login shell, so the host's
-        MOTD banner doesn't pollute the output. Returns (ok, output)."""
-        cmd = ["sudo", "-n", "-u", APP_USER, "-H",
-               "git", "-C", REPO_DIR] + list(args)
-        try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-            return p.returncode == 0, (p.stdout + p.stderr).strip()
-        except Exception as e:
-            return False, str(e)
+        """Run a git command in REPO_DIR as APP_USER. See module-level _git()."""
+        return _git(args, timeout)
 
     def _update_version_info(self):
         ok, head = self._git_as_user(["log", "-1", "--format=%h\t%cd\t%s",
@@ -916,18 +962,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             info.update({"commit": commit, "date": date, "subject": subject})
         else:
             info["error"] = head
-        # Recent commit history (the changelog). \x1f is a field separator that
-        # never appears in a subject. The first entry is HEAD (what's installed).
-        hok, hist = self._git_as_user(
-            ["log", "-40", "--no-merges", "--format=%h\x1f%cd\x1f%s", "--date=short"])
-        history = []
-        if hok and hist:
-            for line in hist.splitlines():
-                parts = line.split("\x1f")
-                if len(parts) == 3:
-                    history.append({"commit": parts[0], "date": parts[1],
-                                    "subject": parts[2]})
-        info["history"] = history
+        # Per-host update log — the REAL self-update events for this deployment
+        # (newest first), seeded with a "deployed" baseline. Not the git changelog.
+        _seed_update_history()
+        info["history"] = list(reversed(_read_update_history()))
         return info
 
     def _handle_update(self):
@@ -944,6 +982,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         ok, out = self._git_as_user(["pull", "--ff-only"], timeout=120)
         add("git pull", ok, out)
         if not ok:
+            _append_update_history({"time": int(time.time()), "event": "failed",
+                                    "message": (out or "")[:200]})
             self._json(200, {"ok": False, "log": log,
                              "message": "git pull failed — resolve it on the host"})
             return
@@ -960,6 +1000,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(200, {"ok": True, "log": log, "changed": [],
                              "message": "Already up to date."})
             return
+
+        # Record this real update event in the per-host log (the commits pulled).
+        nok, nlog = self._git_as_user(["log", "--format=%h\x1f%s", before + ".." + after])
+        commits = []
+        if nok and nlog:
+            for line in nlog.splitlines():
+                p = line.split("\x1f")
+                if len(p) == 2:
+                    commits.append({"commit": p[0], "subject": p[1]})
+        _append_update_history({"time": int(time.time()), "event": "updated",
+                                "from": (before or "")[:7], "to": (after or "")[:7],
+                                "commits": commits})
 
         def deploy(name, argv, env_extra):
             env = dict(os.environ)
@@ -1115,6 +1167,9 @@ if __name__ == "__main__":
     # other endpoint for its whole duration. The _prev_* snapshot globals are
     # shared across threads; a rare concurrent-poll race only skews one
     # reading, which the next poll corrects.
+    # Seed the per-host update log with a "deployed" baseline on first start
+    # (≈ deploy time) so the history starts from when this deployment came up.
+    _seed_update_history()
     server = http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler)
     server.daemon_threads = True
     print(f"terminal-manager listening on 127.0.0.1:{port}")
