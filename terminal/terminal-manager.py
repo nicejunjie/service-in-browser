@@ -1288,6 +1288,32 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except Exception:
             pass
 
+    def _handle_office_download(self):
+        # GET ?path= -> the ORIGINAL office file as an attachment (the viewer
+        # shows a PDF rendition, but Download should give the real .docx/.xlsx/…).
+        # User-facing (behind Access), so no HMAC; just gated under ~ + OFFICE_RE.
+        rel = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query).get("path", [""])[0]
+        src = _resolve_under_home(rel)
+        if not src or not OFFICE_RE.search(src):
+            return self.send_error(404)
+        try:
+            with open(src, "rb") as f:
+                body = f.read()
+        except OSError:
+            return self.send_error(404)
+        fn = os.path.basename(src)
+        self.send_response(200)
+        self.send_header("Content-Type", "application/octet-stream")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Content-Disposition",
+                         "attachment; filename=\"%s\"; filename*=UTF-8''%s"
+                         % (fn.replace('"', ''), urllib.parse.quote(fn)))
+        self.end_headers()
+        try:
+            self.wfile.write(body)
+        except Exception:
+            pass
+
     def _handle_office_callback(self):
         # POST ?path=&t= -> OnlyOffice save notifications. status 2/6 means the
         # edited document is ready; download it from the doc server and write back.
@@ -1538,6 +1564,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
         if self.path.startswith("/api/office/config"):
             return self._handle_office_config()
+        if self.path.startswith("/api/office/download"):
+            return self._handle_office_download()
         if self.path.startswith("/api/office/doc"):
             return self._handle_office_doc()
         if self.path.startswith("/api/office/preview"):

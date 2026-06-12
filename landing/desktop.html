@@ -270,7 +270,8 @@
     <div class="dv-bar">
       <span class="dv-title" id="dv-title">Document</span>
       <span class="dv-spacer"></span>
-      <button class="dv-edit" id="dv-edit" title="Open in LibreOffice for editing">✎ Edit</button>
+      <button class="dv-edit" id="dv-download" title="Download the original file">⤓ Download</button>
+      <button class="dv-edit" id="dv-edit" title="Open in OnlyOffice for editing">✎ Edit</button>
       <button class="dv-close" id="dv-close">✕ Close</button>
     </div>
     <div class="dv-body" id="dv-body"><div class="dv-loading">Rendering…</div></div>
@@ -288,7 +289,7 @@
     <div class="sm-item" data-id="upload"><div class="sm-icon">⬆</div><div><div class="sm-name">Upload</div><div class="sm-desc">Quick file upload to ~/Uploads</div></div></div>
     <div class="sm-title sm-title-system">System</div>
     <div class="sm-item" data-id="update"><div class="sm-icon">⬇</div><div><div class="sm-name">Update</div><div class="sm-desc">Pull latest from GitHub &amp; redeploy</div></div></div>
-    <div class="sm-build"><span class="build-tag">Vibetop · v1.5.4</span></div>
+    <div class="sm-build"><span class="build-tag">Vibetop · v1.5.5</span></div>
   </div>
 
   <div class="taskbar" id="taskbar">
@@ -659,7 +660,9 @@
     dvBody.innerHTML = '<div class="dv-loading">Rendering…</div>';
     var iframe = document.createElement('iframe');
     // Document load (not fetch) → carries the Access cookie like the app frames.
-    iframe.src = '/api/office/preview?path=' + encodeURIComponent(path);
+    // #toolbar=0 hides the browser's native PDF toolbar (whose Download would
+    // grab the PDF rendition) — the bar's Download button gets the real file.
+    iframe.src = '/api/office/preview?path=' + encodeURIComponent(path) + '#toolbar=0';
     iframe.addEventListener('load', function() {
       var l = dvBody.querySelector('.dv-loading');
       if (l) l.remove();
@@ -683,6 +686,14 @@
   document.getElementById('dv-close').addEventListener('click', closeDoc);
   document.getElementById('dv-edit').addEventListener('click', function() {
     if (dvDocPath) { var p = dvDocPath; closeDoc(); editDoc(p); }
+  });
+  document.getElementById('dv-download').addEventListener('click', function() {
+    if (!dvDocPath) return;
+    // Download the ORIGINAL office file (not the PDF preview).
+    var a = document.createElement('a');
+    a.href = '/api/office/download?path=' + encodeURIComponent(dvDocPath);
+    a.download = dvDocPath.split('/').pop();
+    document.body.appendChild(a); a.click(); a.remove();
   });
   document.addEventListener('keydown', function(e) {
     if (e.key === 'Escape' && dvEl.classList.contains('open')) closeDoc();

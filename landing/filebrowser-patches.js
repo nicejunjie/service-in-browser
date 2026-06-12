@@ -198,15 +198,13 @@
   }
 
   // FileBrowser can't preview office files — opening one lands on its "Preview
-  // is not available" page (the URL becomes /files/files/<path>/<file.xlsx>).
-  // Detect that and open OUR viewer instead. This works the same on desktop and
-  // touch regardless of how the file was opened (click, double-click, tap),
-  // since it keys off the URL rather than intercepting the gesture.
-  // Primary path: intercept the click on an office file so FileBrowser never
-  // navigates to its useless "Preview is not available" page. We open our viewer
-  // OVER the folder listing, so closing it just reveals the listing again — no
-  // dead-end page, no history juggling. Works on desktop and touch.
-  document.addEventListener("click", function(e) {
+  // is not available" page. Intercept the OPEN gesture on an office file and
+  // show our viewer instead. We must match FileBrowser's own open gesture so
+  // office files behave like every other type: single click only SELECTS,
+  // double-click opens (desktop); a single tap opens (touch). Intercepting plain
+  // "click" on desktop made office files open on a single click — this fixes it.
+  var IS_TOUCH = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
+  document.addEventListener(IS_TOUCH ? "click" : "dblclick", function(e) {
     var item = e.target.closest("[aria-label]");
     if (!item || !item.hasAttribute("data-dir")) return;   // not a listing item
     if (item.getAttribute("data-dir") === "true") return;  // a folder
