@@ -112,13 +112,15 @@ SERVICES_FILE = os.path.expanduser(f"~{APP_USER}/claude-web-www/services.json")
 # ---- Office (Word/Excel/PPT) view & edit -----------------------------------
 # View: convert to PDF with headless LibreOffice (cached) and serve it inline.
 # Edit: open the file in LibreOffice on the xpra desktop (the Browser app).
-OFFICE_RE = re.compile(r"\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf|csv)$", re.I)
+OFFICE_RE = re.compile(
+    r"\.(docx?|docm|dotx?|dotm|xlsx?|xlsm|xlsb|xltx?|xltm|pptx?|pptm|ppsx?|ppsm"
+    r"|potx?|potm|odt|ods|odp|ott|ots|otp|rtf|csv|tsv)$", re.I)
 OFFICE_HOME = os.path.expanduser(f"~{APP_USER}")
 OFFICE_CACHE_DIR = os.path.join(OFFICE_HOME, ".cache", "vibetop-office")
 # A LibreOffice user profile dedicated to headless conversion, kept separate
 # from the interactive instance so a "View" never collides with an open "Edit".
 OFFICE_CONVERT_PROFILE = os.path.join(OFFICE_CACHE_DIR, "lo-convert-profile")
-OFFICE_DISPLAY = os.environ.get("BROWSER_DISPLAY", ":99")  # xpra display
+OFFICE_DISPLAY = os.environ.get("OFFICE_DISPLAY", ":98")  # dedicated Office xpra desktop
 _office_convert_lock = threading.Lock()
 
 # The git checkout this manager runs from: <repo>/terminal/terminal-manager.py.
@@ -310,6 +312,28 @@ def _office_user_env(user):
         "DBUS_SESSION_BUS_ADDRESS": f"unix:path=/run/user/{pw.pw_uid}/bus",
         "LANG": os.environ.get("LANG", "en_US.UTF-8"),
     }
+
+
+def _office_editor_running():
+    """True if an INTERACTIVE LibreOffice is running (the Office app's editor),
+    ignoring the short-lived headless `--convert-to` process used by View. Lets
+    the shell close the Office app when the user quits LibreOffice."""
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/cmdline", "rb") as f:
+                parts = f.read().split(b"\x00")
+        except OSError:
+            continue
+        # Match the soffice.bin EXECUTABLE (argv[0]), not any process that merely
+        # mentions it in an argument (e.g. a `pkill soffice.bin` command).
+        if not parts or os.path.basename(parts[0]) != b"soffice.bin":
+            continue
+        if any(b"--headless" in p or b"--convert-to" in p for p in parts):
+            continue  # that's the View->PDF converter, not the editor
+        return True
+    return False
 
 
 def _office_convert_to_pdf(src):
@@ -1125,8 +1149,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             pass
 
     def _handle_office_open(self):
-        # POST {path} — open the file in LibreOffice on the xpra desktop. A
-        # running LibreOffice picks up the file in its existing instance.
+        # POST {path?} — open a file in LibreOffice on the Office xpra desktop;
+        # with no path, bring up the Start Center (used when the Office app is
+        # opened directly). A running LibreOffice picks up the file in-instance.
         length = int(self.headers.get("Content-Length", 0) or 0)
         if length > 4096:
             self._json(400, {"error": "payload too large"})
@@ -1137,10 +1162,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
         except json.JSONDecodeError:
             self._json(400, {"error": "invalid json"})
             return
-        src = _resolve_under_home(data.get("path", ""))
-        if not src or not OFFICE_RE.search(src):
-            self._json(400, {"error": "not an editable office file"})
-            return
         soffice = shutil.which("soffice") or shutil.which("libreoffice")
         if not soffice:
             self._json(500, {"error": "LibreOffice not installed"})
@@ -1149,10 +1170,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if env is None:
             self._json(500, {"error": f"unknown user: {APP_USER}"})
             return
-        # argv form (no shell) — the filename never gets shell-parsed.
-        subprocess.Popen([soffice, src], env=env, user=APP_USER,
-                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        raw = (data.get("path") or "").strip()
+        if raw:
+            src = _resolve_under_home(raw)
+            if not src or not OFFICE_RE.search(src):
+                self._json(400, {"error": "not an editable office file"})
+                return
+            # argv form (no shell) — the filename never gets shell-parsed.
+            subprocess.Popen([soffice, src], env=env, user=APP_USER,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        elif not _office_editor_running():
+            # No file and nothing open yet → LibreOffice Start Center.
+            subprocess.Popen([soffice], env=env, user=APP_USER,
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         self._json(200, {"ok": True})
+
+    def _handle_office_status(self):
+        self._json(200, {"running": _office_editor_running()})
 
     def _handle_terminal(self, m):
         n, action = int(m.group(1)), m.group(2)
@@ -1312,6 +1346,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if self.path == "/api/terminals/status":
             self._json(200, {"running": self._get_running_terminals()})
             return
+        if self.path == "/api/office/status":
+            return self._handle_office_status()
         if self.path.startswith("/api/office/preview"):
             return self._handle_office_preview()
         if self.path == "/api/update":

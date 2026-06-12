@@ -1,0 +1,51 @@
+[Unit]
+Description=claude-office xpra session (display :@OFFICE_DISPLAY_NUM@, HTML5 on 127.0.0.1:@OFFICE_PORT@)
+After=network.target
+
+[Service]
+Type=simple
+User=@APP_USER@
+Group=@APP_USER@
+WorkingDirectory=~
+Environment=HOME=@APP_HOME@
+Environment=XDG_RUNTIME_DIR=/run/user/@APP_UID@
+Environment=XPRA_PING_TIMEOUT=45
+# A dedicated desktop for the Office app: matchbox WM only, NO auto-started
+# application. LibreOffice is launched on demand by the manager (/api/office/open)
+# onto this display, so editing a document never touches the Browser desktop.
+ExecStart=/usr/bin/xpra start-desktop :@OFFICE_DISPLAY_NUM@ \
+    --bind-ws=127.0.0.1:@OFFICE_PORT@ \
+    --ws-auth=none \
+    --html=on \
+    --daemon=no \
+    --xvfb=Xorg \
+    --start="matchbox-window-manager -use_titlebar no -use_desktop no" \
+    --clipboard=yes \
+    --clipboard-direction=both \
+    --sharing=yes \
+    --resize-display=yes \
+    --input-devices=uinput \
+    --notifications=no \
+    --mdns=no \
+    --printing=no \
+    --pulseaudio=no \
+    --speaker=off \
+    --microphone=off \
+    --dbus=no \
+    --encoding=auto \
+    --min-quality=30 \
+    --quality=80 \
+    --min-speed=50 \
+    --speed=100 \
+    --compression_level=3 \
+    --video-scaling=auto \
+    --sync-xvfb=0
+ExecStop=/usr/bin/xpra stop :@OFFICE_DISPLAY_NUM@
+Restart=on-failure
+RestartSec=3
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+
+[Install]
+WantedBy=multi-user.target

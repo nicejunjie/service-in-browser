@@ -85,6 +85,7 @@
   .task-app.active[data-id="terminal"] { border-bottom-color: #33aa55; }
   .task-app.active[data-id="browser"]  { border-bottom-color: #3a7adb; }
   .task-app.active[data-id="files"]    { border-bottom-color: #8a4adb; }
+  .task-app.active[data-id="office"]   { border-bottom-color: #d2691e; }
   .task-app.active[data-id="notes"]    { border-bottom-color: #1ab3a6; }
   .task-app.active[data-id="monitor"]  { border-bottom-color: #d2902a; }
   .task-app.active[data-id="upload"]   { border-bottom-color: #3ab36a; }
@@ -157,6 +158,7 @@
   .sm-item[data-id="terminal"] .sm-icon { background: #1a5c2a; }
   .sm-item[data-id="browser"]  .sm-icon { background: #1a3a6b; }
   .sm-item[data-id="files"]    .sm-icon { background: #3a1a6b; }
+  .sm-item[data-id="office"]   .sm-icon { background: #6b2a10; }
   .sm-item[data-id="notes"]    .sm-icon { background: #0a4a44; }
   .sm-item[data-id="monitor"]  .sm-icon { background: #4a3010; }
   .sm-item[data-id="upload"]   .sm-icon { background: #0f5c2e; }
@@ -280,12 +282,13 @@
     <div class="sm-item" data-id="terminal"><div class="sm-icon">⬛</div><div><div class="sm-name">Terminal</div><div class="sm-desc">Persistent bash sessions</div></div></div>
     <div class="sm-item" data-id="browser"><div class="sm-icon">🌐</div><div><div class="sm-name">Browser</div><div class="sm-desc">Persistent Chromium via xpra</div></div></div>
     <div class="sm-item" data-id="files"><div class="sm-icon">📁</div><div><div class="sm-name">Files</div><div class="sm-desc">File manager rooted at home</div></div></div>
+    <div class="sm-item" data-id="office"><div class="sm-icon">📄</div><div><div class="sm-name">Office</div><div class="sm-desc">Edit Word/Excel/PPT (LibreOffice)</div></div></div>
     <div class="sm-item" data-id="notes"><div class="sm-icon">📝</div><div><div class="sm-name">Notes</div><div class="sm-desc">Persistent scratchpad</div></div></div>
     <div class="sm-item" data-id="monitor"><div class="sm-icon">📊</div><div><div class="sm-name">Monitor</div><div class="sm-desc">Live system dashboard</div></div></div>
     <div class="sm-item" data-id="upload"><div class="sm-icon">⬆</div><div><div class="sm-name">Upload</div><div class="sm-desc">Quick file upload to ~/Uploads</div></div></div>
     <div class="sm-title sm-title-system">System</div>
     <div class="sm-item" data-id="update"><div class="sm-icon">⬇</div><div><div class="sm-name">Update</div><div class="sm-desc">Pull latest from GitHub &amp; redeploy</div></div></div>
-    <div class="sm-build"><span class="build-tag">Vibetop · v1.3.1</span></div>
+    <div class="sm-build"><span class="build-tag">Vibetop · v1.4.0</span></div>
   </div>
 
   <div class="taskbar" id="taskbar">
@@ -322,6 +325,7 @@
     terminal: { label: 'Terminal', icon: '⬛', src: '/terminals/?v=3' },
     browser:  { label: 'Browser',  icon: '🌐', src: '/browser/' },
     files:    { label: 'Files',    icon: '📁', src: '/files/' },
+    office:   { label: 'Office',   icon: '📄', src: '/office/' },
     notes:    { label: 'Notes',    icon: '📝', src: '/notes.html' },
     monitor:  { label: 'Monitor',  icon: '📊', src: '/monitor.html' },
     upload:   { label: 'Upload',   icon: '⬆',  src: '/upload.html' },
@@ -509,6 +513,36 @@
     if (openApps.indexOf(id) === -1) { openApps.push(id); ensureFrame(id); }
     setActive(id);            // relays status itself when id === 'home'
     closeMenu();
+    if (id === 'office') {
+      // Opening the Office app should show LibreOffice — launch the Start Center
+      // if nothing's open yet (the manager no-ops if a doc is already open).
+      fetch('/api/office/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(function() {});
+      startOfficeWatch();
+    }
+  }
+
+  // --- Office app lifecycle: close the app when the user quits LibreOffice ---
+  var officePoll = null, officeSeen = false;
+  function startOfficeWatch() {
+    officeSeen = false;
+    if (officePoll) return;
+    officePoll = setInterval(officeTick, 3000);
+  }
+  function stopOfficeWatch() { if (officePoll) { clearInterval(officePoll); officePoll = null; } }
+  function officeTick() {
+    if (openApps.indexOf('office') === -1) { stopOfficeWatch(); return; }
+    fetch('/api/office/status').then(function(r) { return r.json(); }).then(function(d) {
+      if (d && d.running) { officeSeen = true; }
+      // Only close once we've actually seen LibreOffice running (avoids closing
+      // during the few seconds it takes to start).
+      else if (officeSeen) { stopOfficeWatch(); if (openApps.indexOf('office') !== -1) closeApp('office'); }
+    }).catch(function() {});
+  }
+  // Open a document in LibreOffice on the Office app, then switch to it.
+  function ensureOfficeApp() {
+    if (openApps.indexOf('office') === -1) { openApps.push('office'); ensureFrame('office'); }
+    setActive('office');
+    startOfficeWatch();
   }
 
   function closeApp(id) {
@@ -668,14 +702,14 @@
     dvBody.innerHTML = '';   // stop rendering / free the PDF
     dvDocPath = null;
   }
-  // Open a doc in LibreOffice on the Browser desktop, then switch to it.
+  // Open a doc in LibreOffice on the Office desktop, then switch to it.
   function editDoc(path) {
     fetch('/api/office/open', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ path: path })
     }).then(function(r) { return r.json(); }).then(function(d) {
-      if (d && d.ok) launch('browser');
+      if (d && d.ok) ensureOfficeApp();
       else alert((d && d.error) || 'Could not open the document for editing.');
     }).catch(function() { alert('Could not reach the document service.'); });
   }
@@ -752,6 +786,13 @@
     saved.forEach(function(id) {
       if (APPS[id] && openApps.indexOf(id) === -1) { openApps.push(id); ensureFrame(id); }
     });
+    // If the Office app was open before the reload, resume it: re-show
+    // LibreOffice (Start Center if the editor isn't running) and re-arm the
+    // quit-watch so closing LibreOffice still closes the app.
+    if (openApps.indexOf('office') !== -1) {
+      fetch('/api/office/open', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).catch(function() {});
+      startOfficeWatch();
+    }
     var lastActive = state && state.active;
     if (openApps.length) {
       setActive(openApps.indexOf(lastActive) !== -1 ? lastActive : openApps[0]);

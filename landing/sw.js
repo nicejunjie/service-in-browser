@@ -4,6 +4,7 @@
  * instant. Everything live or auth-sensitive is network-only and never touched:
  *   /api/*        manager API (status, notes, desktop state, uploads…)
  *   /browser/*    xpra HTML5 client + WebSocket
+ *   /office/*     xpra HTML5 client + WebSocket (Office app / LibreOffice)
  *   /tN/*         ttyd terminals + WebSocket
  *   /terminals/   tabbed terminal UI (tied to live /tN/ iframes)
  *   /files/*      FileBrowser SPA + API
@@ -15,7 +16,7 @@
  * caches. sw.js itself is served no-store (nginx `location /`), so the browser
  * re-checks it on navigation and picks up the new VERSION.
  */
-const VERSION = 'v28';
+const VERSION = 'v30';
 const CACHE = 'shell-' + VERSION;
 
 const PRECACHE = [
@@ -32,7 +33,7 @@ const PRECACHE = [
 ];
 
 // Paths that must always hit the network (live data, websockets, auth).
-const BYPASS = /^\/(api|browser|t\d|terminals|files|fileview|services\.json|cdn-cgi)/;
+const BYPASS = /^\/(api|browser|office|t\d|terminals|files|fileview|services\.json|cdn-cgi)/;
 
 self.addEventListener('install', (e) => {
   e.waitUntil((async () => {

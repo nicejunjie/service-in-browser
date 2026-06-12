@@ -1,4 +1,43 @@
 (function() {
+  // Remember the last folder across refreshes. The shell always (re)loads the
+  // Files app at /files/, so without this every refresh snaps back to home.
+  // FileBrowser is same-origin with the shell, so localStorage persists across
+  // iframe reloads. Restore runs first (before the rest of the patch sets up),
+  // and may navigate away — in which case we bail out of the rest.
+  var FILES_LAST_KEY = "vibetop:files:lastpath";
+  function rememberLocation() {
+    // Only remember real browse routes (not /files/settings, /login…).
+    if (!/\/files\/files(\/|$)/.test(location.pathname)) return;
+    // Don't remember an office file we opened (it auto-launches the viewer) —
+    // remember the folder we were in, so a refresh returns to the listing.
+    if (OFFICE_RE.test(location.pathname)) return;
+    try { localStorage.setItem(FILES_LAST_KEY, location.pathname + location.search); } catch (e) {}
+  }
+  var _ATTEMPT_KEY = "vibetop:files:attempt";
+  var _curPath = location.pathname + location.search;
+  var _base = location.pathname.replace(/\/+$/, "");
+  var _atRoot = (_base === "/files" || _base === "/files/files");
+  var _saved, _attempt;
+  try { _saved = localStorage.getItem(FILES_LAST_KEY); } catch (e) {}
+  try { _attempt = sessionStorage.getItem(_ATTEMPT_KEY); } catch (e) {}
+  if (_saved && _atRoot) {
+    var _savedBase = _saved.split("?")[0].replace(/\/+$/, "");
+    var _savedIsRoot = (_savedBase === "/files" || _savedBase === "/files/files");
+    // Restore the last folder. We record the target first; if FileBrowser
+    // bounces us straight back to root (e.g. the folder was deleted) the next
+    // load sees attempt === saved and lets home stand instead of looping. Any
+    // successful landing (below) clears the marker, so a fast legitimate
+    // refresh always restores again.
+    if (!_savedIsRoot && _saved !== _curPath && _attempt !== _saved) {
+      try { sessionStorage.setItem(_ATTEMPT_KEY, _saved); } catch (e) {}
+      location.replace(_saved);
+      return;
+    }
+  }
+  // On a real (non-root) location the previous restore succeeded — clear the
+  // marker so the next refresh is free to restore.
+  if (!_atRoot) { try { sessionStorage.removeItem(_ATTEMPT_KEY); } catch (e) {} }
+
   // Permanent action buttons: always visible, greyed out when no file selected.
   // When clicked, they delegate to Vue's actual button if it exists.
   var PERMANENT_BUTTONS = [
@@ -48,7 +87,7 @@
   // when such a file is open: View (server renders a read-only PDF in the shell)
   // and Edit (opens it in LibreOffice on the Browser desktop). Both delegate to
   // the parent shell, which holds the Cloudflare Access cookie for /api calls.
-  var OFFICE_RE = /\.(docx?|xlsx?|pptx?|odt|ods|odp|rtf|csv)$/i;
+  var OFFICE_RE = /\.(docx?|docm|dotx?|dotm|xlsx?|xlsm|xlsb|xltx?|xltm|pptx?|pptm|ppsx?|ppsm|potx?|potm|odt|ods|odp|ott|ots|otp|rtf|csv|tsv)$/i;
   var OFFICE_BUTTONS = [
     { icon: "visibility", label: "View", act: "office-view" },
     { icon: "border_color", label: "Edit", act: "office-edit" }
@@ -149,6 +188,7 @@
       btn.addEventListener("click", function() {
         var fp = getFilePath();
         if (fp && OFFICE_RE.test(fp)) {
+          try { fp = decodeURIComponent(fp); } catch (e) {}
           try { window.top.postMessage({ type: def.act, path: fp }, "*"); } catch (e) {}
         }
       });
@@ -157,25 +197,47 @@
     });
   }
 
-  // On touch, a tap on a file OPENS it in FileBrowser — which for office files
-  // just downloads (no preview). Intercept the tap and open our viewer instead.
-  // (Long-press still enters FileBrowser's selection mode, so selecting office
-  // files for rename/delete is unaffected.) Desktop keeps native behavior and
-  // uses the toolbar View/Edit buttons.
-  var IS_TOUCH = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
-  if (IS_TOUCH) {
-    document.addEventListener("click", function(e) {
-      var item = e.target.closest("[aria-label]");
-      if (!item || !item.closest("main")) return;        // must be a listing item
-      if (item.getAttribute("data-dir") === "true") return;
-      var name = item.getAttribute("aria-label") || "";
-      if (!OFFICE_RE.test(name)) return;
-      var dir = location.pathname.replace(/.*\/files\/?/, "");
-      if (dir && !/\/$/.test(dir)) return;               // only from a folder listing
-      e.preventDefault();
-      e.stopPropagation();
-      try { window.top.postMessage({ type: "office-view", path: dir + name }, "*"); } catch (err) {}
-    }, true);
+  // FileBrowser can't preview office files — opening one lands on its "Preview
+  // is not available" page (the URL becomes /files/files/<path>/<file.xlsx>).
+  // Detect that and open OUR viewer instead. This works the same on desktop and
+  // touch regardless of how the file was opened (click, double-click, tap),
+  // since it keys off the URL rather than intercepting the gesture.
+  // Primary path: intercept the click on an office file so FileBrowser never
+  // navigates to its useless "Preview is not available" page. We open our viewer
+  // OVER the folder listing, so closing it just reveals the listing again — no
+  // dead-end page, no history juggling. Works on desktop and touch.
+  document.addEventListener("click", function(e) {
+    var item = e.target.closest("[aria-label]");
+    if (!item || !item.hasAttribute("data-dir")) return;   // not a listing item
+    if (item.getAttribute("data-dir") === "true") return;  // a folder
+    var name = item.getAttribute("aria-label") || "";
+    if (!OFFICE_RE.test(name)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    var dir = location.pathname.replace(/.*\/files\/?/, "");
+    if (dir && !/\/$/.test(dir)) dir = dir.replace(/[^/]*$/, "");   // keep just the folder
+    var rel = dir + name;
+    try { rel = decodeURIComponent(rel); } catch (err) {}
+    try { window.top.postMessage({ type: "office-view", path: rel }, "*"); } catch (err) {}
+  }, true);
+
+  // Fallback: if a click slips past the interceptor (unusual DOM) and
+  // FileBrowser does land on an office file's page, open our viewer from the
+  // URL. No history.back() here — it could leave the iframe on a blank entry;
+  // the click path above is what keeps the listing in place.
+  var _autoOpened = null;
+  function currentOfficeFile() {
+    var p = location.pathname.replace(/.*\/files\/?/, "");
+    if (!p || /\/$/.test(p)) return null;                // a folder listing, not a file
+    if (!OFFICE_RE.test(p)) return null;                 // not an office file
+    try { return decodeURIComponent(p); } catch (e) { return p; }
+  }
+  function maybeAutoOpenOffice() {
+    var rel = currentOfficeFile();
+    if (!rel) { _autoOpened = null; return; }            // reset when back on a listing
+    if (rel === _autoOpened) return;                     // already opened this one
+    _autoOpened = rel;
+    try { window.top.postMessage({ type: "office-view", path: rel }, "*"); } catch (e) {}
   }
 
   function updateOfficeButtons() {
@@ -216,6 +278,8 @@
   function patchAll() {
     if (patching) return;
     patching = true;
+    rememberLocation();
+    maybeAutoOpenOffice();
     shortenLabels();
     injectPermanentButtons();
     injectOfficeButtons();

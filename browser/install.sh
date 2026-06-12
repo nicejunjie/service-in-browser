@@ -28,6 +28,9 @@ APP_HOME="$(getent passwd "$APP_USER" | cut -d: -f6)"
 APP_UID="$(id -u "$APP_USER")"
 DISPLAY_NUM="${DISPLAY_NUM:-99}"
 XPRA_PORT="${XPRA_PORT:-14500}"
+# Second xpra desktop dedicated to the Office app (LibreOffice on demand).
+OFFICE_DISPLAY_NUM="${OFFICE_DISPLAY_NUM:-98}"
+OFFICE_PORT="${OFFICE_PORT:-14600}"
 INSTALL_DEPS="${INSTALL_DEPS:-1}"
 INSTALL_SYSTEMD="${INSTALL_SYSTEMD:-1}"
 INSTALL_NGINX="${INSTALL_NGINX:-1}"
@@ -177,6 +180,15 @@ if (( INSTALL_SYSTEMD )); then
         -e "s|@LOOP_SCRIPT@|$LOOP_SCRIPT|g" \
         "$APP_DIR/systemd/claude-browser-xpra.service" \
         | write_root /etc/systemd/system/claude-browser-xpra.service
+    # Office xpra desktop (LibreOffice on demand) — same template, no app child.
+    sed \
+        -e "s|@APP_USER@|$APP_USER|g" \
+        -e "s|@APP_HOME@|$APP_HOME|g" \
+        -e "s|@APP_UID@|$APP_UID|g" \
+        -e "s|@OFFICE_DISPLAY_NUM@|$OFFICE_DISPLAY_NUM|g" \
+        -e "s|@OFFICE_PORT@|$OFFICE_PORT|g" \
+        "$APP_DIR/systemd/claude-office-xpra.service" \
+        | write_root /etc/systemd/system/claude-office-xpra.service
     run sudo systemctl daemon-reload
 fi
 
@@ -203,16 +215,21 @@ if (( INSTALL_NGINX )); then
     sed -e "s|@XPRA_PORT@|$XPRA_PORT|g" \
         "$APP_DIR/nginx/browser.conf" \
         | write_root /etc/nginx/snippets/claude-extras.d/browser.conf
+    sed -e "s|@OFFICE_PORT@|$OFFICE_PORT|g" \
+        "$APP_DIR/nginx/office.conf" \
+        | write_root /etc/nginx/snippets/claude-extras.d/office.conf
     run sudo nginx -t
     run sudo systemctl reload nginx
 fi
 
 # 7. Enable & start ----------------------------------------------------------
 if (( INSTALL_SYSTEMD )); then
-    echo "== enabling and starting xpra =="
+    echo "== enabling and starting xpra (browser + office) =="
     run sudo systemctl enable --now claude-browser-xpra.service
+    run sudo systemctl enable --now claude-office-xpra.service
 fi
 
 echo
 echo "done. open:"
 echo "  http://<host>/browser/"
+echo "  http://<host>/office/"
