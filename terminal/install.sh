@@ -223,6 +223,22 @@ server {
     run sudo ln -sfn "/etc/nginx/sites-available/$NGINX_SITE_NAME" \
                      "/etc/nginx/sites-enabled/$NGINX_SITE_NAME"
 
+    # Ensure the landing dir exists. The landing installer also creates it, but
+    # the terminal installer can run first on a fresh machine (per the deploy
+    # order), and these copies would otherwise fail with "No such file".
+    run sudo install -d -o "$APP_USER" -g "$APP_USER" "$LANDING_DIR"
+
+    # Let nginx (www-data) traverse into the landing dir even though $HOME is
+    # 0750 — grant execute (traversal) on each ancestor it can't enter. This
+    # MUST run for any nginx install (not just when we write the landing page),
+    # or `/` 404s with "stat() … Permission denied".
+    p="$LANDING_DIR"
+    while p="$(dirname "$p")" && [ "$p" != "/" ] && [ -n "$p" ]; do
+        if ! sudo -u www-data test -x "$p" 2>/dev/null; then
+            run sudo setfacl -m u:www-data:x "$p"
+        fi
+    done
+
     # Install terminals.html to the landing dir for /terminals/ route
     if [ -f "$APP_DIR/terminals.html" ]; then
         run sudo install -o "$APP_USER" -g "$APP_USER" -m 0644 \

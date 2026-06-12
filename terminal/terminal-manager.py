@@ -113,6 +113,49 @@ def _read_amdgpu_pm_info(card_n):
     return out
 
 
+def _read_nvidia_gpu():
+    """Best-effort NVIDIA GPU stats via nvidia-smi, used when no AMD card is
+    found (portability for NVIDIA hosts). Returns a dict with the same keys the
+    AMD path fills — percent/temp/vram_used_gb/vram_total_gb/power_w — or {}."""
+    smi = shutil.which("nvidia-smi")
+    if not smi:
+        return {}
+    try:
+        p = subprocess.run(
+            [smi, "--query-gpu=utilization.gpu,temperature.gpu,memory.used,"
+                  "memory.total,power.draw",
+             "--format=csv,noheader,nounits"],
+            capture_output=True, text=True, timeout=2)
+    except Exception:
+        return {}
+    rows = (p.stdout or "").strip().splitlines()
+    if not rows:
+        return {}
+    parts = [x.strip() for x in rows[0].split(",")]   # first GPU
+    if len(parts) < 5:
+        return {}
+
+    def num(x):
+        try:
+            return float(x)
+        except (ValueError, TypeError):
+            return None
+    util, temp, mu, mt, pw = (num(parts[0]), num(parts[1]), num(parts[2]),
+                              num(parts[3]), num(parts[4]))
+    out = {}
+    if util is not None:
+        out["percent"] = int(util)
+    if temp is not None:
+        out["temp"] = int(temp)
+    if mu is not None:
+        out["vram_used_gb"] = round(mu / 1024, 1)    # nvidia-smi reports MiB
+    if mt is not None:
+        out["vram_total_gb"] = round(mt / 1024, 1)
+    if pw is not None:
+        out["power_w"] = round(pw)
+    return out
+
+
 class _MultipartError(Exception):
     pass
 
@@ -460,6 +503,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             gpu_temp = pm_info["temp"]
         if gpu_power_w is None and pm_info.get("power_w") is not None:
             gpu_power_w = pm_info["power_w"]
+
+        # NVIDIA portability: if no AMD card was found, fill the same GPU fields
+        # from nvidia-smi (no-op on AMD hosts, where the card was found above).
+        if gpu_vram_total_gb is None and gpu_percent is None:
+            nv = _read_nvidia_gpu()
+            if gpu_percent is None:       gpu_percent = nv.get("percent")
+            if gpu_temp is None:          gpu_temp = nv.get("temp")
+            if gpu_vram_used_gb is None:  gpu_vram_used_gb = nv.get("vram_used_gb")
+            if gpu_vram_total_gb is None: gpu_vram_total_gb = nv.get("vram_total_gb")
+            if gpu_power_w is None:        gpu_power_w = nv.get("power_w")
 
         # CPU package power (RAPL — delta between calls)
         cpu_power_w = None
