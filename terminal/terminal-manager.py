@@ -787,6 +787,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._handle_upload()
         if self.path == "/api/upload/clear":
             return self._handle_upload_clear()
+        if self.path == "/api/update/check":
+            return self._handle_update_check()
         if self.path == "/api/update":
             return self._handle_update()
         if self.path == "/api/update/history/clear":
@@ -967,6 +969,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
         _seed_update_history()
         info["history"] = list(reversed(_read_update_history()))
         return info
+
+    def _handle_update_check(self):
+        """Fetch from GitHub and report whether newer commits exist — WITHOUT
+        applying anything. 'git fetch' updates the remote-tracking ref only; the
+        working tree and HEAD are untouched, so this is a read-only probe."""
+        ok, out = self._git_as_user(["fetch", "--quiet", "origin", "main"],
+                                    timeout=120)
+        if not ok:
+            self._json(200, {"ok": False,
+                             "message": "Couldn't reach GitHub — check the host's network.",
+                             "detail": (out or "")[:300]})
+            return
+        _, local = self._git_as_user(["rev-parse", "HEAD"])
+        _, remote = self._git_as_user(["rev-parse", "origin/main"])
+        commits = []
+        if local and remote and local != remote:
+            cok, cout = self._git_as_user(
+                ["log", "--format=%h\x1f%s", local + "..origin/main"])
+            if cok and cout:
+                for line in cout.splitlines():
+                    p = line.split("\x1f")
+                    if len(p) == 2:
+                        commits.append({"commit": p[0], "subject": p[1]})
+        self._json(200, {"ok": True, "behind": len(commits), "commits": commits,
+                         "local": (local or "")[:7], "remote": (remote or "")[:7]})
 
     def _handle_update(self):
         """Pull the latest from GitHub and redeploy whatever changed. Each step's
