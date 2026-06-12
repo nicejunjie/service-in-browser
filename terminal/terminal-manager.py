@@ -978,7 +978,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             log.append({"name": name, "ok": bool(ok), "output": (out or "").strip()})
             return ok
 
-        before, _ = self._git_as_user(["rev-parse", "HEAD"])
+        _, before = self._git_as_user(["rev-parse", "HEAD"])
         ok, out = self._git_as_user(["pull", "--ff-only"], timeout=120)
         add("git pull", ok, out)
         if not ok:
@@ -987,7 +987,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self._json(200, {"ok": False, "log": log,
                              "message": "git pull failed — resolve it on the host"})
             return
-        after, _ = self._git_as_user(["rev-parse", "HEAD"])
+        _, after = self._git_as_user(["rev-parse", "HEAD"])
 
         changed = []
         if before and after and before != after:
