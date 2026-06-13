@@ -198,25 +198,46 @@
   }
 
   // FileBrowser can't preview office files — opening one lands on its "Preview
-  // is not available" page. Intercept the OPEN gesture on an office file and
-  // show our viewer instead. We must match FileBrowser's own open gesture so
-  // office files behave like every other type: single click only SELECTS,
-  // double-click opens (desktop); a single tap opens (touch). Intercepting plain
-  // "click" on desktop made office files open on a single click — this fixes it.
+  // is not available" page. We open OUR viewer instead, and must do so on the
+  // SAME gesture FileBrowser uses so office files behave like every other type:
+  // single click only SELECTS, double-click opens (desktop); a tap opens (touch).
+  //
+  // FileBrowser detects its double-click via plain click events, so we can't just
+  // listen for "dblclick" (it fires too late — FileBrowser has already navigated,
+  // leaving the dead-end page behind our viewer). Instead we detect the
+  // double-click ourselves and block only the SECOND click (so FileBrowser never
+  // opens), leaving the first click to select normally. A capture-phase dblclick
+  // block is a belt-and-suspenders for any build that opens on the native event.
   var IS_TOUCH = !!(window.matchMedia && window.matchMedia("(pointer: coarse)").matches);
-  document.addEventListener(IS_TOUCH ? "click" : "dblclick", function(e) {
+  function officeItem(e) {
     var item = e.target.closest("[aria-label]");
-    if (!item || !item.hasAttribute("data-dir")) return;   // not a listing item
-    if (item.getAttribute("data-dir") === "true") return;  // a folder
+    if (!item || !item.hasAttribute("data-dir") || item.getAttribute("data-dir") === "true") return null;
     var name = item.getAttribute("aria-label") || "";
-    if (!OFFICE_RE.test(name)) return;
-    e.preventDefault();
-    e.stopPropagation();
+    return OFFICE_RE.test(name) ? { item: item, name: name } : null;
+  }
+  function openOffice(name) {
     var dir = location.pathname.replace(/.*\/files\/?/, "");
     if (dir && !/\/$/.test(dir)) dir = dir.replace(/[^/]*$/, "");   // keep just the folder
     var rel = dir + name;
-    try { rel = decodeURIComponent(rel); } catch (err) {}
-    try { window.top.postMessage({ type: "office-view", path: rel }, "*"); } catch (err) {}
+    try { rel = decodeURIComponent(rel); } catch (e) {}
+    try { window.top.postMessage({ type: "office-view", path: rel }, "*"); } catch (e) {}
+  }
+  var _click = { item: null, t: 0 };
+  document.addEventListener("click", function(e) {
+    var o = officeItem(e);
+    if (!o) return;
+    if (IS_TOUCH) { e.preventDefault(); e.stopPropagation(); openOffice(o.name); return; }
+    var now = Date.now();
+    if (_click.item === o.item && now - _click.t < 450) {   // second click → open
+      e.preventDefault(); e.stopPropagation();
+      _click.item = null; _click.t = 0;
+      openOffice(o.name);
+    } else {
+      _click.item = o.item; _click.t = now;                 // first click → let FB select
+    }
+  }, true);
+  document.addEventListener("dblclick", function(e) {
+    if (officeItem(e)) { e.preventDefault(); e.stopPropagation(); }  // never let FB open it
   }, true);
 
   // Fallback: if a click slips past the interceptor (unusual DOM) and
